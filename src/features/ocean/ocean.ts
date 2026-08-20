@@ -74,6 +74,7 @@ uniform vec3 uSunDirection;
 uniform sampler2D uFoamMap;
 uniform sampler2D uSceneColor;
 uniform sampler2D uSceneDepth;
+uniform samplerCube uCubeMap;
 uniform float uCameraNear;
 uniform float uCameraFar;
 uniform mat4 uViewMatrix;
@@ -230,9 +231,9 @@ void main() {
   float cosTheta = clamp(dot(normal, viewDirection), 0.0, 1.0);
   float fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - cosTheta, 5.0);
   vec3 reflectedDirection = normalize(reflect(-viewDirection, normal));
-  vec3 envSky = skyRadiance(reflectedDirection);
   vec4 sceneHit = marchSceneReflection(vWorldPosition, reflectedDirection);
-  vec3 reflected = mix(envSky, sceneHit.rgb, clamp(sceneHit.a, 0.0, 1.0));
+  vec3 cubeSky = textureCube(uCubeMap, reflectedDirection).rgb;
+  vec3 reflected = mix(cubeSky, sceneHit.rgb, clamp(sceneHit.a, 0.0, 1.0));
 
   // Use the wave height as a depth proxy for a finite water column: troughs
   // read denser and bluer while crests receive more transmitted sky color.
@@ -358,7 +359,7 @@ interface OceanUniforms {
   uCameraFar: { value: number };
   uViewMatrix: { value: THREE.Matrix4 };
   uProjMatrix: { value: THREE.Matrix4 };
-  envMap: { value: THREE.Texture | null };
+  uCubeMap: { value: THREE.CubeTexture | null };
 }
 
 function sceneTextureSize(width: number, height: number, pixelRatio = 1): {
@@ -388,18 +389,15 @@ function createSceneTarget(width: number, height: number): THREE.WebGLRenderTarg
   return target;
 }
 
-function createSkyPmrem(
-  renderer: THREE.WebGLRenderer,
-  sky: THREE.Mesh,
-): THREE.WebGLRenderTarget {
-  const generator = new THREE.PMREMGenerator(renderer);
-  const envScene = new THREE.Scene();
-  const skyProbe = sky.clone();
-  skyProbe.position.set(0, 0, 0);
-  envScene.add(skyProbe);
-  const target = generator.fromScene(envScene, 0, 0.1, 2000);
-  envScene.remove(skyProbe);
-  generator.dispose();
+function createCubeMissTarget(): THREE.WebGLCubeRenderTarget {
+  const target = new THREE.WebGLCubeRenderTarget(256, {
+    type: THREE.HalfFloatType,
+    depthBuffer: true,
+    generateMipmaps: true,
+    minFilter: THREE.LinearMipmapLinearFilter,
+    magFilter: THREE.LinearFilter,
+  });
+  target.texture.colorSpace = THREE.LinearSRGBColorSpace;
   return target;
 }
 
@@ -456,32 +454,69 @@ export function createOceanFeature(): RuntimeFeature {
   let sceneState: SceneState | null = null;
   let activeFoamTexture: THREE.Texture | null = null;
   let sceneTarget: THREE.WebGLRenderTarget | null = null;
-  let pmremTarget: THREE.WebGLRenderTarget | null = null;
-  let lastPmremSun = new THREE.Vector3();
+  let cubeTarget: THREE.WebGLCubeRenderTarget | null = null;
+  let cubeCamera: THREE.CubeCamera | null = null;
+  let lastCubeSun = new THREE.Vector3();
+  let capturingCube = false;
   let disposed = false;
   let renderer: THREE.WebGLRenderer | null = null;
   let previousOnShaderError: THREE.WebGLRenderer['debug']['onShaderError'];
 
-  const rebuildSkyPmrem = (
-    renderer: THREE.WebGLRenderer,
-    skyMesh: THREE.Mesh,
-    sunDirection: THREE.Vector3,
-  ): void => {
-    const next = createSkyPmrem(renderer, skyMesh);
-    const previous = pmremTarget;
-    pmremTarget = next;
-    lastPmremSun.copy(sunDirection);
-    if (oceanUniforms) {
-      oceanUniforms.envMap.value = next.texture;
+  const captureCubeMiss = (gl: THREE.WebGLRenderer): void => {
+    if (!scene || !oceanMesh || !cubeCamera || !cubeTarget || !oceanUniforms) {
+      return;
     }
-    previous?.dispose();
+    capturingCube = true;
+    const hidden: THREE.Object3D[] = [oceanMesh];
+    const raft = scene.getObjectByName('raft-player');
+    const contactFoam = scene.getObjectByName('raft-contact-foam');
+    if (raft) {
+      hidden.push(raft);
+    }
+    if (contactFoam) {
+      hidden.push(contactFoam);
+    }
+    const previousVisible = hidden.map((object) => object.visible);
+    const previousSky = sky?.position.clone() ?? null;
+    for (const object of hidden) {
+      object.visible = false;
+    }
+    sky?.position.set(0, 0, 0);
+    cubeCamera.position.set(0, 0, 0);
+    const currentRenderTarget = gl.getRenderTarget();
+    const currentXrEnabled = gl.xr.enabled;
+    const currentShadowAutoUpdate = gl.shadowMap.autoUpdate;
+    const currentToneMapping = gl.toneMapping;
+    const currentOutputColorSpace = gl.outputColorSpace;
+    try {
+      gl.xr.enabled = false;
+      gl.shadowMap.autoUpdate = false;
+      gl.toneMapping = THREE.NoToneMapping;
+      gl.outputColorSpace = THREE.LinearSRGBColorSpace;
+      cubeCamera.update(gl, scene);
+      lastCubeSun.copy(oceanUniforms.uSunDirection.value);
+      oceanUniforms.uCubeMap.value = cubeTarget.texture;
+    } finally {
+      for (let index = 0; index < hidden.length; index += 1) {
+        hidden[index].visible = previousVisible[index];
+      }
+      if (sky && previousSky) {
+        sky.position.copy(previousSky);
+      }
+      gl.xr.enabled = currentXrEnabled;
+      gl.shadowMap.autoUpdate = currentShadowAutoUpdate;
+      gl.toneMapping = currentToneMapping;
+      gl.outputColorSpace = currentOutputColorSpace;
+      gl.setRenderTarget(currentRenderTarget);
+      capturingCube = false;
+    }
   };
 
   const detachOwnedEnvironmentTextures = (): void => {
     if (oceanUniforms) {
       oceanUniforms.uSceneColor.value = null;
       oceanUniforms.uSceneDepth.value = null;
-      oceanUniforms.envMap.value = null;
+      oceanUniforms.uCubeMap.value = null;
     }
   };
 
@@ -537,6 +572,11 @@ export function createOceanFeature(): RuntimeFeature {
           context.viewport.pixelRatio,
         );
         sceneTarget = createSceneTarget(size.width, size.height);
+        cubeTarget = createCubeMissTarget();
+        cubeCamera = new THREE.CubeCamera(0.1, 2000, cubeTarget);
+        cubeCamera.name = 'ocean-cube-miss';
+        cubeCamera.position.set(0, 0, 0);
+        root.add(cubeCamera);
         oceanUniforms = {
           uTime: { value: 0 },
           uSunDirection: { value: environment.sunDirection.clone() },
@@ -547,9 +587,8 @@ export function createOceanFeature(): RuntimeFeature {
           uCameraFar: { value: context.camera.far },
           uViewMatrix: { value: context.camera.matrixWorldInverse.clone() },
           uProjMatrix: { value: context.camera.projectionMatrix.clone() },
-          envMap: { value: null },
+          uCubeMap: { value: cubeTarget.texture },
         };
-        rebuildSkyPmrem(context.renderer, sky, environment.sunDirection);
 
         const oceanMaterial = new THREE.ShaderMaterial({
           // Fog and color-management uniforms are cloned per material; custom
@@ -576,7 +615,7 @@ export function createOceanFeature(): RuntimeFeature {
         const surface = oceanMesh;
         let renderingPrepass = false;
         scene.onBeforeRender = (renderer, renderScene, camera) => {
-          if (renderingPrepass || !oceanUniforms || !sceneTarget) {
+          if (renderingPrepass || capturingCube || !oceanUniforms || !sceneTarget) {
             return;
           }
           renderingPrepass = true;
@@ -598,6 +637,8 @@ export function createOceanFeature(): RuntimeFeature {
         scene.background = new THREE.Color(0x315c6b);
         scene.fog = new THREE.FogExp2(0x5b8793, 0.0031);
 
+        captureCubeMiss(context.renderer);
+
         unregisterService = context.services.provide(oceanSurfaceServiceKey, {
           sampleHeight: (x: number, z: number, elapsedSeconds: number): number => (
             sampleOceanWave(x, z, elapsedSeconds).height
@@ -614,9 +655,10 @@ export function createOceanFeature(): RuntimeFeature {
         unregisterService = null;
         detachOwnedEnvironmentTextures();
         sceneTarget?.dispose();
-        pmremTarget?.dispose();
+        cubeTarget?.dispose();
         sceneTarget = null;
-        pmremTarget = null;
+        cubeTarget = null;
+        cubeCamera = null;
         scene.onBeforeRender = () => undefined;
         if (oceanMesh) {
           oceanMesh.onBeforeRender = () => undefined;
@@ -643,8 +685,8 @@ export function createOceanFeature(): RuntimeFeature {
         return;
       }
       oceanUniforms.uTime.value = context.frame.elapsedSeconds;
-      if (oceanUniforms.uSunDirection.value.distanceToSquared(lastPmremSun) > 1e-8) {
-        rebuildSkyPmrem(context.renderer, sky, oceanUniforms.uSunDirection.value);
+      if (oceanUniforms.uSunDirection.value.distanceToSquared(lastCubeSun) > 1e-8) {
+        captureCubeMiss(context.renderer);
       }
       // Keep the dome centered on the viewer without taking ownership of the
       // camera or changing any camera transform.
@@ -677,9 +719,10 @@ export function createOceanFeature(): RuntimeFeature {
 
       detachOwnedEnvironmentTextures();
       sceneTarget?.dispose();
-      pmremTarget?.dispose();
+      cubeTarget?.dispose();
       sceneTarget = null;
-      pmremTarget = null;
+      cubeTarget = null;
+      cubeCamera = null;
       if (scene) {
         scene.onBeforeRender = () => undefined;
       }
