@@ -72,6 +72,12 @@ const OCEAN_FRAGMENT_SHADER = /* glsl */ `
 uniform float uTime;
 uniform vec3 uSunDirection;
 uniform sampler2D uFoamMap;
+uniform sampler2D uSceneColor;
+uniform sampler2D uSceneDepth;
+uniform float uCameraNear;
+uniform float uCameraFar;
+uniform mat4 uViewMatrix;
+uniform mat4 uProjMatrix;
 
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
@@ -81,6 +87,7 @@ varying float vCompression;
 varying float vCurvature;
 varying float vWaveHeight;
 
+#include <packing>
 #include <fog_pars_fragment>
 
 const float WATER_IOR = 1.333;
@@ -101,6 +108,45 @@ vec3 skyRadiance(vec3 direction) {
   sky += vec3(1.0, 0.72, 0.42) * pow(sunAlignment, 256.0) * 1.25;
   sky += vec3(1.0, 0.43, 0.16) * pow(sunAlignment, 28.0) * 0.018;
   return sky;
+}
+
+float sceneEyeDepth(vec2 uv) {
+  float depth = texture2D(uSceneDepth, uv).x;
+  return -perspectiveDepthToViewZ(depth, uCameraNear, uCameraFar);
+}
+
+// WaterThreeJS SSR: march R through the pre-ocean color+depth target.
+vec4 marchSceneReflection(vec3 origin, vec3 direction) {
+  float stepSize = 0.25;
+  float dist = 0.0;
+  float prevDiff = -1.0;
+  vec2 prevUv = vec2(0.0);
+  for (int i = 0; i < 32; i++) {
+    dist += stepSize;
+    vec3 point = origin + direction * dist;
+    vec4 clip = uProjMatrix * uViewMatrix * vec4(point, 1.0);
+    if (clip.w <= 0.0) {
+      break;
+    }
+    vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+      break;
+    }
+    float sceneEye = sceneEyeDepth(uv);
+    float rayEye = -(uViewMatrix * vec4(point, 1.0)).z;
+    float diff = rayEye - sceneEye;
+    if (diff > 0.0 && diff < 6.0 && sceneEye < uCameraFar * 0.97) {
+      float t = prevDiff < 0.0 ? 1.0 : (-prevDiff / (diff - prevDiff));
+      vec2 hitUv = mix(prevUv, uv, clamp(t, 0.0, 1.0));
+      vec2 edge = smoothstep(vec2(0.0), vec2(0.14), hitUv) * smoothstep(vec2(0.0), vec2(0.14), 1.0 - hitUv);
+      float confidence = edge.x * edge.y * (1.0 - float(i) / 32.0 * 0.4);
+      return vec4(texture2D(uSceneColor, hitUv).rgb, confidence);
+    }
+    prevDiff = diff;
+    prevUv = uv;
+    stepSize *= 1.06;
+  }
+  return vec4(0.0);
 }
 
 void main() {
@@ -127,27 +173,7 @@ void main() {
   vec2 microSlope = vec2(broadDx * 0.38 + fineDx * 0.18, broadDz * 0.38 + fineDz * 0.18);
   normal = normalize(normal + (tangent * microSlope.x + bitangent * microSlope.y) * detailFade);
 
-  // Fresnel-Schlick for the air/water interface. F0 is derived from the
-  // water IOR (roughly ((1.0 - 1.333) / (1.0 + 1.333))^2).
-  float cosTheta = clamp(dot(normal, viewDirection), 0.0, 1.0);
-  float fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - cosTheta, 5.0);
-  vec3 reflectedDirection = normalize(reflect(-viewDirection, normal));
-  vec3 reflectedSky = skyRadiance(reflectedDirection);
-
-  // Use the wave height as a depth proxy for a finite water column: troughs
-  // read denser and bluer while crests receive more transmitted sky color.
-  float shallowFactor = smoothstep(-0.58, 0.46, vWaveHeight);
-  float waterDepth = mix(2.4, 0.54, shallowFactor);
-  vec3 shallowColor = vec3(0.008, 0.105, 0.18);
-  vec3 deepColor = vec3(0.0015, 0.018, 0.045);
-  vec3 bodyColor = mix(deepColor, shallowColor, shallowFactor);
-  vec3 absorption = exp(-vec3(0.26, 0.95, 1.80) * waterDepth);
-  vec3 transmittedWater = bodyColor * (0.52 + absorption * 0.68);
-  vec3 waterColor = mix(transmittedWater, reflectedSky, fresnel);
-
-  // Breakup follows compressed/curved crests, not height alone. The map
-  // modulates the analytic signal into irregular patches and dissipating
-  // streaks instead of a uniform white band.
+  // Breakup follows compressed/curved crests, not height alone.
   vec2 foamUv = vOceanPosition * vec2(0.105, 0.14)
     + vec2(uTime * 0.009, -uTime * 0.006);
   vec3 breakupA = texture2D(uFoamMap, foamUv).rgb;
@@ -167,6 +193,26 @@ void main() {
     0.0,
     1.0
   );
+
+  // Fresnel-Schlick for the air/water interface. F0 is derived from the
+  // water IOR (roughly ((1.0 - 1.333) / (1.0 + 1.333))^2).
+  float cosTheta = clamp(dot(normal, viewDirection), 0.0, 1.0);
+  float fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - cosTheta, 5.0);
+  vec3 reflectedDirection = normalize(reflect(-viewDirection, normal));
+  vec3 envSky = skyRadiance(reflectedDirection);
+  vec4 sceneHit = marchSceneReflection(vWorldPosition, reflectedDirection);
+  vec3 reflected = mix(envSky, sceneHit.rgb, clamp(sceneHit.a, 0.0, 1.0));
+
+  // Use the wave height as a depth proxy for a finite water column: troughs
+  // read denser and bluer while crests receive more transmitted sky color.
+  float shallowFactor = smoothstep(-0.58, 0.46, vWaveHeight);
+  float waterDepth = mix(2.4, 0.54, shallowFactor);
+  vec3 shallowColor = vec3(0.008, 0.105, 0.18);
+  vec3 deepColor = vec3(0.0015, 0.018, 0.045);
+  vec3 bodyColor = mix(deepColor, shallowColor, shallowFactor);
+  vec3 absorption = exp(-vec3(0.26, 0.95, 1.80) * waterDepth);
+  vec3 transmittedWater = bodyColor * (0.52 + absorption * 0.68);
+  vec3 waterColor = mix(transmittedWater, reflected, fresnel);
   vec3 foamColor = mix(vec3(0.16, 0.37, 0.42), vec3(0.72, 0.85, 0.81), breakup);
   waterColor = mix(waterColor, foamColor, foam * 0.52);
 
@@ -268,23 +314,153 @@ function disposeObjectResources(root: THREE.Object3D): void {
 interface SceneState {
   readonly background: THREE.Color | THREE.Texture | null;
   readonly fog: THREE.Fog | THREE.FogExp2 | null;
-  readonly environment: THREE.Texture | null;
   readonly overrideMaterial: THREE.Material | null;
+}
+
+interface OceanUniforms {
+  uTime: { value: number };
+  uSunDirection: { value: THREE.Vector3 };
+  uFoamMap: { value: THREE.Texture };
+  uSceneColor: { value: THREE.Texture | null };
+  uSceneDepth: { value: THREE.Texture | null };
+  uCameraNear: { value: number };
+  uCameraFar: { value: number };
+  uViewMatrix: { value: THREE.Matrix4 };
+  uProjMatrix: { value: THREE.Matrix4 };
+  envMap: { value: THREE.Texture | null };
+}
+
+function sceneTextureSize(width: number, height: number, pixelRatio = 1): {
+  width: number;
+  height: number;
+} {
+  return {
+    width: Math.max(1, Math.floor(width * pixelRatio)),
+    height: Math.max(1, Math.floor(height * pixelRatio)),
+  };
+}
+
+function createSceneTarget(width: number, height: number): THREE.WebGLRenderTarget {
+  const depthTexture = new THREE.DepthTexture(width, height);
+  depthTexture.format = THREE.DepthFormat;
+  depthTexture.type = THREE.UnsignedIntType;
+  const target = new THREE.WebGLRenderTarget(width, height, {
+    type: THREE.HalfFloatType,
+    depthBuffer: true,
+    depthTexture,
+    samples: 0,
+  });
+  target.texture.colorSpace = THREE.NoColorSpace;
+  target.texture.minFilter = THREE.LinearFilter;
+  target.texture.magFilter = THREE.LinearFilter;
+  target.texture.generateMipmaps = false;
+  return target;
+}
+
+function createSkyPmrem(
+  renderer: THREE.WebGLRenderer,
+  sky: THREE.Mesh,
+): THREE.WebGLRenderTarget {
+  const generator = new THREE.PMREMGenerator(renderer);
+  const envScene = new THREE.Scene();
+  const skyProbe = sky.clone();
+  skyProbe.position.set(0, 0, 0);
+  envScene.add(skyProbe);
+  const target = generator.fromScene(envScene, 0, 0.1, 2000);
+  envScene.remove(skyProbe);
+  generator.dispose();
+  return target;
+}
+
+function renderScenePrepass(
+  renderer: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.Camera,
+  oceanMesh: THREE.Mesh,
+  renderTarget: THREE.WebGLRenderTarget,
+  uniforms: OceanUniforms,
+): void {
+  uniforms.uViewMatrix.value.copy(camera.matrixWorldInverse);
+  uniforms.uProjMatrix.value.copy(camera.projectionMatrix);
+  if (camera instanceof THREE.PerspectiveCamera) {
+    uniforms.uCameraNear.value = camera.near;
+    uniforms.uCameraFar.value = camera.far;
+  }
+  const currentRenderTarget = renderer.getRenderTarget();
+  const currentXrEnabled = renderer.xr.enabled;
+  const currentShadowAutoUpdate = renderer.shadowMap.autoUpdate;
+  const currentToneMapping = renderer.toneMapping;
+  const currentOutputColorSpace = renderer.outputColorSpace;
+  // Hide Gerstner for the color+depth capture only. Shader compiles now, so
+  // the main list after unhide still draws the 12-component mesh.
+  oceanMesh.visible = false;
+  try {
+    renderer.xr.enabled = false;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    renderer.setRenderTarget(renderTarget);
+    renderer.state.buffers.depth.setMask(true);
+    if (renderer.autoClear === false) {
+      renderer.clear();
+    }
+    renderer.render(scene, camera);
+  } finally {
+    oceanMesh.visible = true;
+    renderer.xr.enabled = currentXrEnabled;
+    renderer.shadowMap.autoUpdate = currentShadowAutoUpdate;
+    renderer.toneMapping = currentToneMapping;
+    renderer.outputColorSpace = currentOutputColorSpace;
+    renderer.setRenderTarget(currentRenderTarget);
+  }
 }
 
 export function createOceanFeature(): RuntimeFeature {
   let root: THREE.Group | null = null;
   let sky: THREE.Mesh | null = null;
-  let oceanUniforms: {
-    uTime: { value: number };
-    uSunDirection: { value: THREE.Vector3 };
-    uFoamMap: { value: THREE.Texture };
-  } | null = null;
+  let oceanMesh: THREE.Mesh | null = null;
+  let oceanUniforms: OceanUniforms | null = null;
   let unregisterService: (() => void) | null = null;
   let scene: THREE.Scene | null = null;
   let sceneState: SceneState | null = null;
   let activeFoamTexture: THREE.Texture | null = null;
+  let sceneTarget: THREE.WebGLRenderTarget | null = null;
+  let pmremTarget: THREE.WebGLRenderTarget | null = null;
+  let lastPmremSun = new THREE.Vector3();
   let disposed = false;
+  let renderer: THREE.WebGLRenderer | null = null;
+  let previousOnShaderError: THREE.WebGLRenderer['debug']['onShaderError'];
+
+  const rebuildSkyPmrem = (
+    renderer: THREE.WebGLRenderer,
+    skyMesh: THREE.Mesh,
+    sunDirection: THREE.Vector3,
+  ): void => {
+    const next = createSkyPmrem(renderer, skyMesh);
+    const previous = pmremTarget;
+    pmremTarget = next;
+    lastPmremSun.copy(sunDirection);
+    if (oceanUniforms) {
+      oceanUniforms.envMap.value = next.texture;
+    }
+    previous?.dispose();
+  };
+
+  const detachOwnedEnvironmentTextures = (): void => {
+    if (oceanUniforms) {
+      oceanUniforms.uSceneColor.value = null;
+      oceanUniforms.uSceneDepth.value = null;
+      oceanUniforms.envMap.value = null;
+    }
+  };
+
+  const bindSceneTarget = (target: THREE.WebGLRenderTarget): void => {
+    if (!oceanUniforms) {
+      return;
+    }
+    oceanUniforms.uSceneColor.value = target.texture;
+    oceanUniforms.uSceneDepth.value = target.depthTexture;
+  };
 
   return {
     id: 'ocean',
@@ -298,8 +474,16 @@ export function createOceanFeature(): RuntimeFeature {
       sceneState = {
         background: scene.background,
         fog: scene.fog,
-        environment: scene.environment,
         overrideMaterial: scene.overrideMaterial,
+      };
+
+      renderer = context.renderer;
+      previousOnShaderError = renderer.debug.onShaderError;
+      renderer.debug.onShaderError = (gl, program, glVertexShader, glFragmentShader) => {
+        const vsLog = gl.getShaderInfoLog(glVertexShader);
+        const fsLog = gl.getShaderInfoLog(glFragmentShader);
+        console.error('[ocean] shader error', vsLog, fsLog);
+        previousOnShaderError?.(gl, program, glVertexShader, glFragmentShader);
       };
 
       context.loading.update('Loading ocean foam…');
@@ -316,11 +500,25 @@ export function createOceanFeature(): RuntimeFeature {
         root = environment.root;
         sky = environment.sky;
 
+        const size = sceneTextureSize(
+          context.viewport.width,
+          context.viewport.height,
+          context.viewport.pixelRatio,
+        );
+        sceneTarget = createSceneTarget(size.width, size.height);
         oceanUniforms = {
           uTime: { value: 0 },
           uSunDirection: { value: environment.sunDirection.clone() },
           uFoamMap: { value: activeFoamTexture },
+          uSceneColor: { value: sceneTarget.texture },
+          uSceneDepth: { value: sceneTarget.depthTexture },
+          uCameraNear: { value: context.camera.near },
+          uCameraFar: { value: context.camera.far },
+          uViewMatrix: { value: context.camera.matrixWorldInverse.clone() },
+          uProjMatrix: { value: context.camera.projectionMatrix.clone() },
+          envMap: { value: null },
         };
+        rebuildSkyPmrem(context.renderer, sky, environment.sunDirection);
 
         const oceanMaterial = new THREE.ShaderMaterial({
           // Fog and color-management uniforms are cloned per material; custom
@@ -338,12 +536,33 @@ export function createOceanFeature(): RuntimeFeature {
           toneMapped: true,
         });
         const oceanGeometry = new THREE.PlaneGeometry(OCEAN_SIZE, OCEAN_SIZE, OCEAN_SEGMENTS, OCEAN_SEGMENTS);
-        const ocean = new THREE.Mesh(oceanGeometry, oceanMaterial);
-        ocean.name = 'animated-ocean-surface';
-        ocean.rotation.x = -Math.PI / 2;
-        ocean.frustumCulled = false;
-        root.add(ocean);
+        oceanMesh = new THREE.Mesh(oceanGeometry, oceanMaterial);
+        oceanMesh.name = 'animated-ocean-surface';
+        oceanMesh.rotation.x = -Math.PI / 2;
+        oceanMesh.frustumCulled = false;
+        root.add(oceanMesh);
         scene.add(root);
+        const surface = oceanMesh;
+        let renderingPrepass = false;
+        scene.onBeforeRender = (renderer, renderScene, camera) => {
+          if (renderingPrepass || !oceanUniforms || !sceneTarget) {
+            return;
+          }
+          renderingPrepass = true;
+          try {
+            renderScenePrepass(
+              renderer,
+              renderScene,
+              camera,
+              surface,
+              sceneTarget,
+              oceanUniforms,
+            );
+          } finally {
+            renderingPrepass = false;
+            surface.visible = true;
+          }
+        };
 
         scene.background = new THREE.Color(0x315c6b);
         scene.fog = new THREE.FogExp2(0x5b8793, 0.0031);
@@ -362,6 +581,16 @@ export function createOceanFeature(): RuntimeFeature {
       } catch (error) {
         unregisterService?.();
         unregisterService = null;
+        detachOwnedEnvironmentTextures();
+        sceneTarget?.dispose();
+        pmremTarget?.dispose();
+        sceneTarget = null;
+        pmremTarget = null;
+        scene.onBeforeRender = () => undefined;
+        if (oceanMesh) {
+          oceanMesh.onBeforeRender = () => undefined;
+        }
+        oceanMesh = null;
         if (root) {
           scene.remove(root);
           disposeObjectResources(root);
@@ -373,26 +602,60 @@ export function createOceanFeature(): RuntimeFeature {
         activeFoamTexture = null;
         scene.background = sceneState.background;
         scene.fog = sceneState.fog;
-        scene.environment = sceneState.environment;
         scene.overrideMaterial = sceneState.overrideMaterial;
         throw error;
       }
     },
 
     update(context): void {
-      if (!oceanUniforms || !sky) {
+      if (!oceanUniforms || !sky || !oceanMesh || !scene || !sceneTarget) {
         return;
       }
       oceanUniforms.uTime.value = context.frame.elapsedSeconds;
+      if (oceanUniforms.uSunDirection.value.distanceToSquared(lastPmremSun) > 1e-8) {
+        rebuildSkyPmrem(context.renderer, sky, oceanUniforms.uSunDirection.value);
+      }
       // Keep the dome centered on the viewer without taking ownership of the
       // camera or changing any camera transform.
       sky.position.copy(context.camera.position);
     },
 
+    resize(context): void {
+      if (!sceneTarget || !oceanUniforms) {
+        return;
+      }
+      const size = sceneTextureSize(
+        context.viewport.width,
+        context.viewport.height,
+        context.viewport.pixelRatio,
+      );
+      if (sceneTarget.width !== size.width || sceneTarget.height !== size.height) {
+        sceneTarget.setSize(size.width, size.height);
+        bindSceneTarget(sceneTarget);
+      }
+    },
+
     dispose(): void {
       disposed = true;
+      if (renderer) {
+        renderer.debug.onShaderError = previousOnShaderError;
+        renderer = null;
+      }
       unregisterService?.();
       unregisterService = null;
+
+      detachOwnedEnvironmentTextures();
+      sceneTarget?.dispose();
+      pmremTarget?.dispose();
+      sceneTarget = null;
+      pmremTarget = null;
+      if (scene) {
+        scene.onBeforeRender = () => undefined;
+      }
+      if (oceanMesh) {
+        oceanMesh.onBeforeRender = () => undefined;
+      }
+      oceanMesh = null;
 
       if (root && scene) {
         scene.remove(root);
@@ -406,7 +669,6 @@ export function createOceanFeature(): RuntimeFeature {
       if (scene && sceneState) {
         scene.background = sceneState.background;
         scene.fog = sceneState.fog;
-        scene.environment = sceneState.environment;
         scene.overrideMaterial = sceneState.overrideMaterial;
       }
       scene = null;
