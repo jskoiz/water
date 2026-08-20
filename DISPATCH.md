@@ -2,7 +2,7 @@
 
 This is the coordinator-owned source of truth for implementation dispatches. A task marked `ready` is queued for a future worker; it is not active until the coordinator records a worker thread, branch, worktree, and base commit.
 
-No implementation worker is active during the orchestration setup turn.
+`FND-001` is the only active implementation lane. All feature and QA lanes remain dependency-gated until its runtime contracts are reviewed and integrated.
 
 Every implementation dispatch uses `gpt-5.6-luna` at `max` reasoning effort and contains exactly one lane plus the exclusive write scope recorded below.
 
@@ -16,7 +16,7 @@ Use `blocked` whenever a dependency or acceptance decision prevents dispatch. On
 
 | Task | Lane | State | Depends on | Worker | Branch / worktree | Exclusive worker write scope |
 | --- | --- | --- | --- | --- | --- | --- |
-| `FND-001` | `foundation` | `ready` | None | Standby: `01a01c90-b504-7d13-97bc-5aa00daa623a` | `c1/foundation-bootstrap` / record exact worktree at dispatch | `package.json`; `package-lock.json`; `index.html`; `vite.config.*`; `tsconfig*.json`; `src/main.*`; `src/runtime/**` |
+| `FND-001` | `foundation` | `active` | None | `/root/foundation_fnd001` | `c1/foundation-bootstrap` / `/private/tmp/water-fnd001` / base `e207233` | `package.json`; `package-lock.json`; `index.html`; `vite.config.*`; `tsconfig*.json`; `src/main.*`; `src/runtime/**` |
 | `OCE-001` | `ocean-rendering` | `blocked` | `FND-001` integrated and its runtime contracts reviewed | Unassigned | `c1/ocean-rendering` / create after dependency | `src/features/ocean/**`; `src/features/environment/**`; `public/ocean/**`; `tests/ocean/**` |
 | `RAFT-001` | `raft-systems` | `blocked` | `FND-001` integrated and its runtime contracts reviewed | Unassigned | `c1/raft-systems` / create after dependency | `src/features/raft/**`; `public/raft/**`; `tests/raft/**` |
 | `QA-001` | `world-qa` | `blocked` | `FND-001` integrated; dev URL and browser runner agreed; required shared wiring serialized by coordinator | Standby: `01a01c90-b8ec-77d0-90e1-3457ea5ca0f7` | `c1/world-qa-smoke` / record exact worktree after dependency | `qa/**` |
@@ -59,8 +59,8 @@ Paths not listed in a worker's row are out of scope. Dependency or shared-file c
 ## Dependency and lockfile policy
 
 - Foundation uses npm and commits exactly one `package-lock.json`; no alternate lockfile is allowed.
-- Direct dependencies are saved at exact versions rather than floating ranges. The first worker prompt must record the exact stable Vite, TypeScript, and Three.js versions selected for compatibility with the verified coordinator runtime.
-- The coordinator runtime observed during setup is Node `v22.21.0` with npm `10.9.4`. Re-check it at activation and choose versions then, so the dormant queue does not freeze stale registry versions.
+- Direct dependencies are saved at exact versions rather than floating ranges. The activated foundation set is Vite `8.2.1`, TypeScript `7.0.2`, Three.js `0.185.1`, and `@types/three` `0.185.4` when separate declarations are required.
+- The coordinator verified Node `v22.21.0` with npm `10.9.4` at activation. Vite `8.2.1` declares Node `^20.19.0 || >=22.12.0`.
 - Package manifest, lockfile, entrypoint, and build/runtime configuration remain serialized through `FND-001`. Later workers return dependency or script-wiring requests to the coordinator.
 
 ## Standby evidence
@@ -98,4 +98,4 @@ At handoff, record:
 
 | Task | Base commit | Worker commit | Diff review | Validation run | Main merge | Risks / follow-up |
 | --- | --- | --- | --- | --- | --- | --- |
-| _None dispatched_ | — | — | — | — | — | — |
+| `FND-001` | `e207233` | _Active_ | _Pending handoff_ | _Pending handoff_ | _Not merged_ | Exclusive foundation scope enforced. |
