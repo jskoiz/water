@@ -2,7 +2,7 @@
 
 This is the coordinator-owned source of truth for implementation dispatches. A task marked `ready` is queued for a future worker; it is not active until the coordinator records a worker thread, branch, worktree, and base commit.
 
-Foundation, first-pass features, QA, fog repair, first visual-polish lanes, and the second screenshot's narrow horizon-scale and camera-framing corrections are integrated. A research-backed physical-water round is active from clean baseline `d90be9d` in three disjoint lanes.
+Foundation, first-pass features, QA, fog repair, first visual-polish lanes, and the second screenshot's narrow horizon-scale and camera-framing corrections are integrated. The three research-backed physical-water lanes from clean baseline `d90be9d` are integrated. Native-frame comparison then opened two disjoint optical/atmospheric repair lanes from the integrated build.
 
 Every implementation dispatch uses `gpt-5.6-luna` at `max` reasoning effort and contains exactly one lane plus the exclusive write scope recorded below.
 
@@ -22,12 +22,14 @@ Use `blocked` whenever a dependency or acceptance decision prevents dispatch. On
 | `OCE-003` | `ocean-rendering` | `integrated` | Integrated browser fatal after `OCE-002` composition | `/root/ocean_oce003` | `c1/ocean-fog-fix` / `/Users/jk/Desktop/water/.worktrees/oce003` / base `cf21135` | `src/features/ocean/ocean.ts`; `tests/ocean/**` |
 | `OCE-004` | `ocean-rendering` | `integrated` | Repaired runtime screenshot comparison at `055184c` | `/root/ocean_oce004` | `c1/ocean-visual-polish` / `/Users/jk/Desktop/water/.worktrees/oce004` / base `055184c` | `src/features/ocean/**`; `src/features/environment/**` |
 | `OCE-005` | `ocean-rendering` | `integrated` | Second screenshot showed foreground-sized destination | `/root/ocean_oce005` | `c1/horizon-scale-fix` / `/Users/jk/Desktop/water/.worktrees/oce005` / base `3e7bfb7` | `src/features/environment/atmosphere.ts` |
-| `OCE-006` | `ocean-rendering` | `active` | Accepted baseline `d90be9d`; physical-water research complete | `/root/ocean_oce006` | `c1/ocean-physical-water` / `/Users/jk/Desktop/water/.worktrees/oce006` / base `d90be9d` | `src/features/ocean/waves.ts`; `src/features/ocean/ocean.ts`; optional `tests/ocean/**` |
-| `ENV-001` | `ocean-rendering` | `active` | Accepted baseline `d90be9d`; atmosphere research complete | `/root/environment_env001` | `c1/environment-physical-light` / `/Users/jk/Desktop/water/.worktrees/env001` / base `d90be9d` | `src/features/environment/atmosphere.ts` |
+| `OCE-006` | `ocean-rendering` | `integrated` | Accepted baseline `d90be9d`; physical-water research complete | `/root/ocean_oce006` | `c1/ocean-physical-water` / `/Users/jk/Desktop/water/.worktrees/oce006` / base `d90be9d` | `src/features/ocean/waves.ts`; `src/features/ocean/ocean.ts`; optional `tests/ocean/**` |
+| `OCE-007` | `ocean-rendering` | `active` | Integrated `OCE-006` frame showed broad chalky foam/reflection | `/root/ocean_oce006` | `c1/ocean-optical-tuning` / `/Users/jk/Desktop/water/.worktrees/oce007` / base `90ee59d` | `src/features/ocean/ocean.ts` |
+| `ENV-001` | `ocean-rendering` | `integrated` | Accepted baseline `d90be9d`; atmosphere research complete | `/root/environment_env001` | `c1/environment-physical-light` / `/Users/jk/Desktop/water/.worktrees/env001` / base `d90be9d` | `src/features/environment/atmosphere.ts` |
+| `ENV-002` | `ocean-rendering` | `active` | Integrated `ENV-001` frame showed a sparse, flat cloud field | `/root/environment_env001` | `c1/environment-visual-tuning` / `/Users/jk/Desktop/water/.worktrees/env002` / base `79cec93` | `src/features/environment/atmosphere.ts` |
 | `RAFT-001` | `raft-systems` | `integrated` | `FND-001` integrated and runtime contracts reviewed at `ccfc531` | `/root/raft_raft001` | `c1/raft-systems` / `/private/tmp/water-raft001` / base `ccfc531` | `src/features/raft/**`; `public/raft/**`; `tests/raft/**` |
 | `RAFT-002` | `raft-systems` | `integrated` | Repaired runtime screenshot comparison at `055184c` | `/root/raft_raft002` | `c1/raft-visual-polish` / `/Users/jk/Desktop/water/.worktrees/raft002` / base `055184c` | `src/features/raft/**` |
 | `RAFT-003` | `raft-systems` | `integrated` | Second screenshot clipped deck/hull below viewport | `/root/raft_raft003` | `c1/raft-framing-fix` / `/Users/jk/Desktop/water/.worktrees/raft003` / base `3e7bfb7` | `src/features/raft/raft.ts` |
-| `RAFT-004` | `raft-systems` | `active` | Accepted baseline `d90be9d`; marine-response research complete | `/root/raft_raft004` | `c1/raft-physical-response` / `/Users/jk/Desktop/water/.worktrees/raft004` / base `d90be9d` | `src/features/raft/raft.ts` |
+| `RAFT-004` | `raft-systems` | `integrated` | Accepted baseline `d90be9d`; marine-response research complete | `/root/raft_raft004` | `c1/raft-physical-response` / `/Users/jk/Desktop/water/.worktrees/raft004` / base `d90be9d` | `src/features/raft/raft.ts` |
 | `QA-001` | `world-qa` | `integrated` | `FND-001` integrated; dev URL `http://127.0.0.1:5173`; Codex In-app Browser runner | `/root/qa_qa001` | `c1/world-qa-smoke` / `/private/tmp/water-qa001` / base `ccfc531` | `qa/**` |
 
 Paths not listed in a worker's row are out of scope. Dependency or shared-file changes are returned to the coordinator for a separate dispatch; workers do not widen their own scope.
@@ -72,11 +74,23 @@ Paths not listed in a worker's row are out of scope. Dependency or shared-file c
 - Add distance-filtered micro-normal detail, water-IOR Fresnel-Schlick, reflected-sky/transmitted-water separation, restrained sun glitter, trough absorption, and Three.js tone-mapping/color-space integration.
 - Preserve lifecycle, fog, loading, disposal, mobile support, and a bounded tessellation/shader cost.
 
+### OCE-007 — integrated ocean optical repair
+
+- Retain the verified Gerstner geometry, physical water IOR, service contract, and lifecycle from `OCE-006`.
+- Restrict foam to irregular compressed crests, deepen trough absorption, reduce chalky reflected saturation, and shape a restrained broken sun-glitter path.
+- Compare the native `1586x992` result directly with the accepted concept and the rejected `water-realism-interim.png` frame; the sea must not read as ice or a continuous snowfield.
+
 ### ENV-001 — physical atmosphere and scene lighting
 
 - Upgrade the sky with efficient Rayleigh/Mie phase approximations, horizon optical depth, aerial perspective, a physically scaled sun disc, and layered clouds with light/self-shadow cues.
 - Rebalance directional and hemispheric light, PBR environment materials, and shadow-ready islands/lighthouse without changing the public environment interface or destination framing.
 - Keep the shader compatible with Three.js tone mapping/color management and avoid new dependencies or assets.
+
+### ENV-002 — integrated atmosphere visual repair
+
+- Retain the verified Rayleigh/Mie/extinction basis, physical sun core, public interface, destination positions, tone mapping, color conversion, and shadow setup from `ENV-001`.
+- Replace the sparse/banded appearance with layered maritime cloud bodies, lit edges, self-shadowed volume, deeper upper-sky blue, and a warm aerial-perspective horizon.
+- Compare the native `1586x992` result directly with the accepted concept and the rejected `water-lighting-interim.png` frame; keep the ocean and raft out of crushed shadow.
 
 ### RAFT-004 — damped marine motion
 
@@ -140,6 +154,7 @@ The coordinator owns `AGENTS.md`, `ORCHESTRATOR.md`, `DISPATCH.md`, `.orchestrat
 5. Re-run `QA-001` after both feature lanes and coordinator-owned composition are integrated. Treat its browser evidence, and any separately agreed visual/performance criteria, as the merge-readiness gate for the first complete slice.
 6. For the physical-water round, review `OCE-006`, `ENV-001`, and `RAFT-004` independently, merge only passing scoped diffs, then serialize renderer tone-mapping/shadow integration on `main`.
 7. Re-run full build, HTTP smoke, desktop/mobile Browser QA, interaction proof, console review, and native-concept screenshot comparison. Dispatch narrow repair lanes for any material defect.
+8. Review `OCE-007` and `ENV-002` independently, merge only passing one-file diffs, and repeat the complete integrated visual gate from a fresh reload.
 
 ## Dispatch record template
 
@@ -161,10 +176,12 @@ At handoff, record:
 | `OCE-003` | `cf21135` | `f23066c` | Exact seven-line shader diff reviewed | Worker and coordinator: typecheck/build; coordinator browser rerun cleared fatal | `055184c` | Fog retained with cloned complete uniforms; post-repair log segment has no new error. |
 | `OCE-004` | `055184c` | `9d91b4e` | Scope/diff and CPU/shader parity reviewed | Worker and coordinator: typecheck/build; worker browser desktop/mobile | `3e7bfb7` | Clouds/waves/glints improved; second screenshot found destination overscaled. |
 | `OCE-005` | `3e7bfb7` | `b96faba` | Exact atmosphere-only diff reviewed; destination association and all unrelated environment values preserved | Worker and coordinator: typecheck/build/diff check; worker projection assertions at 1586x992 | `40d9f6f` | Final desktop screenshot accepted the reduced horizon destination. |
-| `OCE-006` | `d90be9d` | _Active_ | Research-backed scope and no-overlap boundary dispatched | _Pending handoff_ | _Not merged_ | Gerstner geometry, analytic normals, physical shading, and foam only. |
-| `ENV-001` | `d90be9d` | _Active_ | Research-backed one-file atmosphere boundary dispatched | _Pending handoff_ | _Not merged_ | Sky, lighting, environment materials, and shadow configuration only. |
+| `OCE-006` | `d90be9d` | `048df97` | Exact three-file scope and full CPU/GLSL/shader/lifecycle diff reviewed | Worker and coordinator: typecheck; build; five focused ocean tests; diff check; worker desktop/mobile browser | `90ee59d` | Integrated locally; native frame exposed excessive broad white foam/reflection, assigned to `OCE-007`. |
+| `OCE-007` | `90ee59d` | _Active_ | One-file optical repair dispatched from the rejected integrated frame | _Pending handoff_ | _Not merged_ | Foam sparsity, dark-water optical balance, and broken sun glitter only. |
+| `ENV-001` | `d90be9d` | `2e903ca` | Exact one-file scope and full sky/light/material/shadow diff reviewed | Worker and coordinator: typecheck; build; diff check; worker desktop/mobile browser | `79cec93` | Integrated locally; native frame exposed an overly sparse/flat cloud field, assigned to `ENV-002`. |
+| `ENV-002` | `79cec93` | _Active_ | One-file atmosphere repair dispatched from the rejected integrated frame | _Pending handoff_ | _Not merged_ | Cloud volume, sun/halo readability, and sky-depth balance only. |
 | `RAFT-001` | `ccfc531` | `d995cc3` | Full scope/diff and lifecycle review passed; asset hashes match | Worker and coordinator: typecheck/build; diff checks | `c6e6d52` | Live integration with `ocean.surface.v1` and browser proof remain. |
 | `RAFT-002` | `055184c` | `5dec595` | Scope/diff and resource lifecycle reviewed | Worker and coordinator: typecheck/build; focused assertions | `0b8f5c8` | Wake/material/HUD improved; second screenshot found camera over-zoomed. |
 | `RAFT-003` | `3e7bfb7` | `0fb8141` | Exact raft-only diff reviewed; existing target and drag-look controls preserved | Worker and coordinator: typecheck/build/diff check; worker 1586x992 mast/hull framing assertion | `ca882e9` | Final desktop screenshot accepted the complete raft framing. |
-| `RAFT-004` | `d90be9d` | _Active_ | Research-backed one-file marine-motion boundary dispatched | _Pending handoff_ | _Not merged_ | Damped heave/roll/pitch, contact sampling, wake/spray, and shadow readiness only. |
+| `RAFT-004` | `d90be9d` | `4738043` | Exact one-file scope and full spring/contact/wake/lifecycle diff reviewed | Worker and coordinator: typecheck; build; diff check; worker numerical bounds and desktop/mobile browser | `ca4b6cb` | Integrated locally; remains a bounded reduced-order marine model rather than a full fluid solver. |
 | `QA-001` | `ccfc531` | `ea7d849` | Full scope/diff review passed; seven Water markers defaulted | Worker and coordinator: syntax/import checks; HTTP smoke; desktop/mobile In-app Browser evidence; input and resize | `e200361` | Final functional and visual smoke passed; performance budgets remain intentionally deferred. |
