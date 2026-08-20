@@ -33,6 +33,8 @@ workers:
 4. Workers report changed paths, commit hash, checks run, remaining risks, and any follow-up needed.
 5. The coordinator reviews each diff, resolves integration conflicts, runs the full project checks, and merges only after the result is verified.
 
+The live queue, exclusive write scopes, dependency gates, and merge evidence are maintained in [DISPATCH.md](./DISPATCH.md). A queued task is not an active dispatch until its worker thread, branch, worktree, and base commit are recorded there.
+
 ## Merge policy
 
 - `main` is the integration branch.

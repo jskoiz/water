@@ -1,6 +1,7 @@
 {
   "project": "water",
   "integrationBranch": "main",
+  "dispatchBoard": "DISPATCH.md",
   "orchestrator": {
     "model": "gpt-5.6-sol",
     "reasoningEffort": "max"
