@@ -8,6 +8,7 @@ import type {
 } from '../../runtime';
 import { createRaftHud } from './hud';
 import type { RaftHud } from './hud';
+import { sampleOceanWave } from '../ocean/waves';
 import {
   oceanSurfaceServiceKey,
 } from './types';
@@ -71,6 +72,11 @@ interface SpringState {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
 }
 
 function damp(current: number, target: number, sharpness: number, deltaSeconds: number): number {
@@ -181,6 +187,8 @@ function loadTexture(loader: THREE.TextureLoader, url: string): Promise<THREE.Te
 class RaftController {
   private readonly raftGroup = new THREE.Group();
   private readonly wakeGroup = new THREE.Group();
+  private readonly contactFoamGroup = new THREE.Group();
+  private readonly contactRings: THREE.Mesh[] = [];
   private readonly sampleOffsets = [
     // A symmetric 3x3 contact stencil gives the hull a centerline keel and
     // midship contacts in addition to the four corners. It reacts to local
@@ -273,6 +281,7 @@ class RaftController {
     this.buildRaft();
     this.buildWake();
     context.scene.add(this.raftGroup);
+    context.scene.add(this.contactFoamGroup);
     this.canvas = context.renderer.domElement;
     this.canvas.dataset.qa = 'water-canvas';
     this.hud = createRaftHud(context.renderer.domElement);
@@ -311,6 +320,8 @@ class RaftController {
     this.hud?.dispose();
     this.hud = null;
     this.raftGroup.removeFromParent();
+    this.contactFoamGroup.removeFromParent();
+    this.contactRings.length = 0;
     for (const geometry of this.geometries) {
       geometry.dispose();
     }
@@ -355,6 +366,7 @@ class RaftController {
     this.raftGroup.name = 'raft-player';
     this.raftGroup.userData.raftFeature = true;
     this.wakeGroup.name = 'raft-wake';
+    this.contactFoamGroup.name = 'raft-contact-foam';
 
     const woodMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
       color: 0xa9794f,
@@ -662,6 +674,25 @@ class RaftController {
       });
     }
     this.raftGroup.add(this.wakeGroup);
+
+    const contactGeometry = this.registerGeometry(new THREE.RingGeometry(0.55, 1, 24));
+    for (let index = 0; index < this.sampleOffsets.length; index += 1) {
+      const contactMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
+        color: 0xd8f2f2,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        depthTest: true,
+        side: THREE.DoubleSide,
+        fog: true,
+      }));
+      const ring = new THREE.Mesh(contactGeometry, contactMaterial);
+      ring.rotation.x = -Math.PI / 2;
+      ring.visible = false;
+      ring.renderOrder = 3;
+      this.contactFoamGroup.add(ring);
+      this.contactRings.push(ring);
+    }
   }
 
   private createWakeRibbonGeometry(sections: readonly WakeSection[]): THREE.BufferGeometry {
@@ -982,18 +1013,18 @@ class RaftController {
   private updateWake(elapsedSeconds: number): void {
     const speedFactor = clamp(this.speedMetersPerSecond / 3.35, 0, 1);
     const impactFactor = clamp(this.wakeImpact, 0, 1);
+    // Wake is boat speed first, plus a slap from heave rate. Spring is read-only.
     const wakeStrength = clamp(
-      speedFactor * 0.76
-      + speedFactor * impactFactor * 0.24
-      + impactFactor * 0.28,
+      smoothstep(0.35, 2.8, this.speedMetersPerSecond)
+      + 0.2 * Math.abs(this.heaveVelocity),
       0,
       1,
     );
     this.wakeGroup.visible = wakeStrength > 0.012;
     this.wakeGroup.scale.set(
-      0.82 + speedFactor * 0.22 + impactFactor * 0.04,
+      0.82 + wakeStrength * 0.26,
       1,
-      0.78 + speedFactor * 0.3 + impactFactor * 0.18,
+      0.78 + wakeStrength * 0.48,
     );
     if (this.wakeUniforms) {
       this.wakeUniforms.uTime.value = elapsedSeconds;
@@ -1027,6 +1058,52 @@ class RaftController {
         size * (0.92 + impactFactor * 0.48),
         size * (0.44 + speedFactor * 0.28),
       );
+    }
+
+    this.updateContactFoam(elapsedSeconds);
+  }
+
+  private updateContactFoam(elapsedSeconds: number): void {
+    const ocean = this.ocean;
+    if (!ocean) {
+      this.contactFoamGroup.visible = false;
+      return;
+    }
+
+    this.contactFoamGroup.visible = true;
+    for (let index = 0; index < this.sampleOffsets.length; index += 1) {
+      const offset = this.sampleOffsets[index];
+      this.sampleWorldPosition.copy(offset).applyAxisAngle(WORLD_UP, this.heading);
+      this.sampleWorldPosition.x += this.positionX;
+      this.sampleWorldPosition.z += this.positionZ;
+      const height = ocean.sampleHeight(
+        this.sampleWorldPosition.x,
+        this.sampleWorldPosition.z,
+        elapsedSeconds,
+      );
+      const compression = clamp(
+        sampleOceanWave(
+          this.sampleWorldPosition.x,
+          this.sampleWorldPosition.z,
+          elapsedSeconds,
+        ).compression,
+        0,
+        1,
+      );
+      const alpha = clamp(compression * this.speedMetersPerSecond, 0, 1);
+      const radius = 0.35 + 0.45 * compression;
+      const ring = this.contactRings[index];
+      ring.position.set(
+        this.sampleWorldPosition.x,
+        height + 0.04,
+        this.sampleWorldPosition.z,
+      );
+      ring.scale.setScalar(radius);
+      ring.visible = alpha > 0.02;
+      const material = ring.material;
+      if (material instanceof THREE.MeshBasicMaterial) {
+        material.opacity = alpha * 0.72;
+      }
     }
   }
 
