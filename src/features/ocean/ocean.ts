@@ -280,7 +280,6 @@ function disposeObjectResources(root: THREE.Object3D): void {
 interface SceneState {
   readonly background: THREE.Color | THREE.Texture | null;
   readonly fog: THREE.Fog | THREE.FogExp2 | null;
-  readonly environment: THREE.Texture | null;
   readonly overrideMaterial: THREE.Material | null;
 }
 
@@ -478,9 +477,6 @@ export function createOceanFeature(): RuntimeFeature {
     if (oceanUniforms) {
       oceanUniforms.envMap.value = next.texture;
     }
-    if (scene) {
-      scene.environment = next.texture;
-    }
     previous?.dispose();
   };
 
@@ -503,7 +499,6 @@ export function createOceanFeature(): RuntimeFeature {
       sceneState = {
         background: scene.background,
         fog: scene.fog,
-        environment: scene.environment,
         overrideMaterial: scene.overrideMaterial,
       };
 
@@ -604,7 +599,6 @@ export function createOceanFeature(): RuntimeFeature {
         activeFoamTexture = null;
         scene.background = sceneState.background;
         scene.fog = sceneState.fog;
-        scene.environment = sceneState.environment;
         scene.overrideMaterial = sceneState.overrideMaterial;
         throw error;
       }
@@ -672,7 +666,6 @@ export function createOceanFeature(): RuntimeFeature {
       if (scene && sceneState) {
         scene.background = sceneState.background;
         scene.fog = sceneState.fog;
-        scene.environment = sceneState.environment;
         scene.overrideMaterial = sceneState.overrideMaterial;
       }
       scene = null;
