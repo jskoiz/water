@@ -5,7 +5,6 @@ import { createRuntimeServiceKey } from '../../runtime/services';
 import type { RuntimeFeature } from '../../runtime/types';
 import {
   createOceanWaveShaderSource,
-  OCEAN_SURFACE_LEVEL,
   sampleOceanNormal,
   sampleOceanWave,
 } from './waves';
@@ -21,20 +20,17 @@ const OCEAN_SIZE = 480;
 const OCEAN_SEGMENTS = 240;
 const FOAM_TEXTURE_PATH = '/ocean/foam-breakup.png';
 const OCEAN_WAVE_SHADER_SOURCE = createOceanWaveShaderSource();
-const REFLECT_DISTORTION = 0.08;
-const REFLECT_DESKTOP_EDGE = 1024;
-const REFLECT_MOBILE_EDGE = 512;
+const SCENE_DESKTOP_EDGE = 1024;
+const SCENE_MOBILE_EDGE = 512;
 
 const OCEAN_VERTEX_SHADER = /* glsl */ `
 ${OCEAN_WAVE_SHADER_SOURCE}
 
 uniform float uTime;
-uniform mat4 uReflectionMatrix;
 
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
 varying vec2 vOceanPosition;
-varying vec4 vReflectCoord;
 varying float vFoam;
 varying float vCompression;
 varying float vCurvature;
@@ -66,10 +62,6 @@ void main() {
   vWaveHeight = wave.height;
   vWorldNormal = normalize(mat3(modelMatrix) * localNormal);
   vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
-  // Water.js: textureMatrix * rest world position on the y=0 plane, not the
-  // Gerstner-displaced vertex and not mesh UVs.
-  vec4 restWorld = modelMatrix * vec4(position, 1.0);
-  vReflectCoord = uReflectionMatrix * restWorld;
 
   vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
   gl_Position = projectionMatrix * mvPosition;
@@ -82,27 +74,68 @@ const OCEAN_FRAGMENT_SHADER = /* glsl */ `
 uniform float uTime;
 uniform vec3 uSunDirection;
 uniform sampler2D uFoamMap;
-uniform sampler2D tReflection;
-uniform float uReflectionDistortion;
+uniform sampler2D uSceneColor;
+uniform sampler2D uSceneDepth;
+uniform float uCameraNear;
+uniform float uCameraFar;
+uniform mat4 uProjMatrix;
 uniform sampler2D envMap;
 
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
 varying vec2 vOceanPosition;
-varying vec4 vReflectCoord;
 varying float vFoam;
 varying float vCompression;
 varying float vCurvature;
 varying float vWaveHeight;
 
+#include <packing>
 #include <fog_pars_fragment>
 #include <cube_uv_reflection_fragment>
 
 const float WATER_IOR = 1.333;
 const float WATER_F0 = 0.020373;
+#define SSR_STEPS 32
 
 float foamLuma(vec2 uv) {
   return dot(texture2D(uFoamMap, uv).rgb, vec3(0.3333333));
+}
+
+float sceneEyeDepth(vec2 uv) {
+  float depth = texture2D(uSceneDepth, uv).x;
+  return -perspectiveDepthToViewZ(depth, uCameraNear, uCameraFar);
+}
+
+// WaterThreeJS SSR: march R through the pre-ocean color+depth target.
+vec4 marchSceneReflection(vec3 origin, vec3 direction) {
+  float stepLen = 2.2;
+  float prevDiff = -1.0;
+  vec2 prevUv = vec2(0.0);
+  for (int i = 1; i <= SSR_STEPS; i += 1) {
+    vec3 point = origin + direction * (stepLen * float(i));
+    vec4 clip = uProjMatrix * viewMatrix * vec4(point, 1.0);
+    if (clip.w <= 0.0) {
+      break;
+    }
+    vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+      break;
+    }
+    float sceneEye = sceneEyeDepth(uv);
+    float rayEye = -(viewMatrix * vec4(point, 1.0)).z;
+    float diff = rayEye - sceneEye;
+    if (diff > 0.0 && diff < 6.0 && sceneEye < uCameraFar * 0.97) {
+      float t = prevDiff < 0.0 ? 1.0 : (-prevDiff / (diff - prevDiff));
+      vec2 hitUv = mix(prevUv, uv, clamp(t, 0.0, 1.0));
+      vec2 edge = smoothstep(0.0, 0.14, hitUv) * smoothstep(0.0, 0.14, 1.0 - hitUv);
+      float confidence = edge.x * edge.y * (1.0 - float(i) / float(SSR_STEPS) * 0.4);
+      return vec4(texture2D(uSceneColor, hitUv).rgb, confidence);
+    }
+    prevDiff = diff;
+    prevUv = uv;
+    stepLen *= 1.06;
+  }
+  return vec4(0.0);
 }
 
 void main() {
@@ -129,8 +162,7 @@ void main() {
   vec2 microSlope = vec2(broadDx * 0.38 + fineDx * 0.18, broadDz * 0.38 + fineDz * 0.18);
   normal = normalize(normal + (tangent * microSlope.x + bitangent * microSlope.y) * detailFade);
 
-  // Breakup follows compressed/curved crests, not height alone. Compute foam
-  // before reflection so planar UV distortion can fade on white crests.
+  // Breakup follows compressed/curved crests, not height alone.
   vec2 foamUv = vOceanPosition * vec2(0.105, 0.14)
     + vec2(uTime * 0.009, -uTime * 0.006);
   vec3 breakupA = texture2D(uFoamMap, foamUv).rgb;
@@ -157,17 +189,8 @@ void main() {
   float fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - cosTheta, 5.0);
   vec3 reflectedDirection = normalize(reflect(-viewDirection, normal));
   vec3 envSky = textureCubeUV(envMap, reflectedDirection, 0.0).rgb;
-
-  vec2 reflUv = vReflectCoord.xy / max(vReflectCoord.w, 1e-4)
-    + normal.xz * uReflectionDistortion;
-  float planarValid = step(1e-4, vReflectCoord.w)
-    * smoothstep(0.0, 0.04, reflUv.x)
-    * smoothstep(1.0, 0.96, reflUv.x)
-    * smoothstep(0.0, 0.04, reflUv.y)
-    * smoothstep(1.0, 0.96, reflUv.y);
-  vec3 planar = texture2D(tReflection, clamp(reflUv, 0.0, 1.0)).rgb;
-  float planarPresent = step(0.02, max(max(planar.r, planar.g), planar.b));
-  vec3 reflected = mix(envSky, planar, planarValid * planarPresent);
+  vec4 sceneHit = marchSceneReflection(vWorldPosition, reflectedDirection);
+  vec3 reflected = mix(envSky, sceneHit.rgb, clamp(sceneHit.a, 0.0, 1.0));
 
   // Use the wave height as a depth proxy for a finite water column: troughs
   // read denser and bluer while crests receive more transmitted sky color.
@@ -287,32 +310,30 @@ interface OceanUniforms {
   uTime: { value: number };
   uSunDirection: { value: THREE.Vector3 };
   uFoamMap: { value: THREE.Texture };
-  tReflection: { value: THREE.Texture };
-  uReflectionMatrix: { value: THREE.Matrix4 };
-  uReflectionDistortion: { value: number };
+  uSceneColor: { value: THREE.Texture | null };
+  uSceneDepth: { value: THREE.Texture | null };
+  uCameraNear: { value: number };
+  uCameraFar: { value: number };
+  uProjMatrix: { value: THREE.Matrix4 };
   envMap: { value: THREE.Texture | null };
 }
 
-const _reflectorNormal = new THREE.Vector3(0, 1, 0);
-const _reflectorWorldPosition = new THREE.Vector3(0, OCEAN_SURFACE_LEVEL, 0);
-const _cameraWorldPosition = new THREE.Vector3();
-const _rotationMatrix = new THREE.Matrix4();
-const _lookAtPosition = new THREE.Vector3();
-const _view = new THREE.Vector3();
-const _target = new THREE.Vector3();
-
-function reflectionTextureSize(width: number, height: number): {
+function sceneTextureSize(width: number, height: number): {
   width: number;
   height: number;
 } {
-  const edge = Math.min(width, height) <= 500 ? REFLECT_MOBILE_EDGE : REFLECT_DESKTOP_EDGE;
+  const edge = Math.min(width, height) <= 500 ? SCENE_MOBILE_EDGE : SCENE_DESKTOP_EDGE;
   return { width: edge, height: edge };
 }
 
-function createReflectionTarget(width: number, height: number): THREE.WebGLRenderTarget {
+function createSceneTarget(width: number, height: number): THREE.WebGLRenderTarget {
+  const depthTexture = new THREE.DepthTexture(width, height);
+  depthTexture.format = THREE.DepthFormat;
+  depthTexture.type = THREE.UnsignedIntType;
   const target = new THREE.WebGLRenderTarget(width, height, {
     type: THREE.HalfFloatType,
     depthBuffer: true,
+    depthTexture,
     samples: 0,
   });
   target.texture.colorSpace = THREE.NoColorSpace;
@@ -337,61 +358,13 @@ function createSkyPmrem(
   return target;
 }
 
-function updatePlanarReflection(
+function renderScenePrepass(
   renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,
   camera: THREE.Camera,
   oceanMesh: THREE.Mesh,
-  reflectionCamera: THREE.PerspectiveCamera,
   renderTarget: THREE.WebGLRenderTarget,
-  textureMatrix: THREE.Matrix4,
 ): void {
-  if (!(camera instanceof THREE.PerspectiveCamera)) {
-    return;
-  }
-  const perspectiveCamera = camera;
-  oceanMesh.updateMatrixWorld();
-  _reflectorWorldPosition.setFromMatrixPosition(oceanMesh.matrixWorld);
-  _cameraWorldPosition.setFromMatrixPosition(perspectiveCamera.matrixWorld);
-  _rotationMatrix.extractRotation(oceanMesh.matrixWorld);
-  _reflectorNormal.set(0, 0, 1);
-  _reflectorNormal.applyMatrix4(_rotationMatrix);
-
-  _view.subVectors(_reflectorWorldPosition, _cameraWorldPosition);
-  if (_view.dot(_reflectorNormal) > 0) {
-    return;
-  }
-
-  _view.reflect(_reflectorNormal).negate();
-  _view.add(_reflectorWorldPosition);
-
-  _rotationMatrix.extractRotation(perspectiveCamera.matrixWorld);
-  _lookAtPosition.set(0, 0, -1);
-  _lookAtPosition.applyMatrix4(_rotationMatrix);
-  _lookAtPosition.add(_cameraWorldPosition);
-
-  _target.subVectors(_reflectorWorldPosition, _lookAtPosition);
-  _target.reflect(_reflectorNormal).negate();
-  _target.add(_reflectorWorldPosition);
-
-  reflectionCamera.position.copy(_view);
-  reflectionCamera.up.set(0, 1, 0);
-  reflectionCamera.up.applyMatrix4(_rotationMatrix);
-  reflectionCamera.up.reflect(_reflectorNormal);
-  reflectionCamera.lookAt(_target);
-  reflectionCamera.far = perspectiveCamera.far;
-  reflectionCamera.updateMatrixWorld();
-  reflectionCamera.projectionMatrix.copy(perspectiveCamera.projectionMatrix);
-
-  textureMatrix.set(
-    0.5, 0.0, 0.0, 0.5,
-    0.0, 0.5, 0.0, 0.5,
-    0.0, 0.0, 0.5, 0.5,
-    0.0, 0.0, 0.0, 1.0,
-  );
-  textureMatrix.multiply(reflectionCamera.projectionMatrix);
-  textureMatrix.multiply(reflectionCamera.matrixWorldInverse);
-
   const currentRenderTarget = renderer.getRenderTarget();
   const currentXrEnabled = renderer.xr.enabled;
   const currentShadowAutoUpdate = renderer.shadowMap.autoUpdate;
@@ -407,20 +380,13 @@ function updatePlanarReflection(
   if (renderer.autoClear === false) {
     renderer.clear();
   }
-  renderer.render(scene, reflectionCamera);
+  renderer.render(scene, camera);
   oceanMesh.visible = true;
   renderer.xr.enabled = currentXrEnabled;
   renderer.shadowMap.autoUpdate = currentShadowAutoUpdate;
   renderer.toneMapping = currentToneMapping;
   renderer.outputColorSpace = currentOutputColorSpace;
   renderer.setRenderTarget(currentRenderTarget);
-
-  const viewport = (perspectiveCamera as THREE.PerspectiveCamera & {
-    viewport?: THREE.Vector4;
-  }).viewport;
-  if (viewport !== undefined) {
-    renderer.state.viewport(viewport);
-  }
 }
 
 export function createOceanFeature(): RuntimeFeature {
@@ -432,9 +398,8 @@ export function createOceanFeature(): RuntimeFeature {
   let scene: THREE.Scene | null = null;
   let sceneState: SceneState | null = null;
   let activeFoamTexture: THREE.Texture | null = null;
-  let reflectTarget: THREE.WebGLRenderTarget | null = null;
+  let sceneTarget: THREE.WebGLRenderTarget | null = null;
   let pmremTarget: THREE.WebGLRenderTarget | null = null;
-  let reflectionCamera: THREE.PerspectiveCamera | null = null;
   let lastPmremSun = new THREE.Vector3();
   let disposed = false;
 
@@ -455,9 +420,18 @@ export function createOceanFeature(): RuntimeFeature {
 
   const detachOwnedEnvironmentTextures = (): void => {
     if (oceanUniforms) {
-      oceanUniforms.tReflection.value = null as unknown as THREE.Texture;
+      oceanUniforms.uSceneColor.value = null;
+      oceanUniforms.uSceneDepth.value = null;
       oceanUniforms.envMap.value = null;
     }
+  };
+
+  const bindSceneTarget = (target: THREE.WebGLRenderTarget): void => {
+    if (!oceanUniforms) {
+      return;
+    }
+    oceanUniforms.uSceneColor.value = target.texture;
+    oceanUniforms.uSceneDepth.value = target.depthTexture;
   };
 
   return {
@@ -489,24 +463,20 @@ export function createOceanFeature(): RuntimeFeature {
         root = environment.root;
         sky = environment.sky;
 
-        const size = reflectionTextureSize(
+        const size = sceneTextureSize(
           context.viewport.width,
           context.viewport.height,
         );
-        reflectTarget = createReflectionTarget(size.width, size.height);
-        reflectionCamera = new THREE.PerspectiveCamera(
-          context.camera.fov,
-          context.camera.aspect,
-          context.camera.near,
-          context.camera.far,
-        );
+        sceneTarget = createSceneTarget(size.width, size.height);
         oceanUniforms = {
           uTime: { value: 0 },
           uSunDirection: { value: environment.sunDirection.clone() },
           uFoamMap: { value: activeFoamTexture },
-          tReflection: { value: reflectTarget.texture },
-          uReflectionMatrix: { value: new THREE.Matrix4() },
-          uReflectionDistortion: { value: REFLECT_DISTORTION },
+          uSceneColor: { value: sceneTarget.texture },
+          uSceneDepth: { value: sceneTarget.depthTexture },
+          uCameraNear: { value: context.camera.near },
+          uCameraFar: { value: context.camera.far },
+          uProjMatrix: { value: context.camera.projectionMatrix.clone() },
           envMap: { value: null },
         };
         rebuildSkyPmrem(context.renderer, sky, environment.sunDirection);
@@ -536,24 +506,16 @@ export function createOceanFeature(): RuntimeFeature {
         oceanMesh.frustumCulled = false;
         root.add(oceanMesh);
         scene.add(root);
-        let renderingReflection = false;
+        let renderingPrepass = false;
         scene.onBeforeRender = (renderer, renderScene, camera) => {
-          if (renderingReflection || !oceanMesh || !oceanUniforms || !reflectTarget || !reflectionCamera) {
+          if (renderingPrepass || !oceanMesh || !sceneTarget) {
             return;
           }
-          renderingReflection = true;
+          renderingPrepass = true;
           try {
-            updatePlanarReflection(
-              renderer,
-              renderScene,
-              camera,
-              oceanMesh,
-              reflectionCamera,
-              reflectTarget,
-              oceanUniforms.uReflectionMatrix.value,
-            );
+            renderScenePrepass(renderer, renderScene, camera, oceanMesh, sceneTarget);
           } finally {
-            renderingReflection = false;
+            renderingPrepass = false;
           }
         };
 
@@ -575,11 +537,10 @@ export function createOceanFeature(): RuntimeFeature {
         unregisterService?.();
         unregisterService = null;
         detachOwnedEnvironmentTextures();
-        reflectTarget?.dispose();
+        sceneTarget?.dispose();
         pmremTarget?.dispose();
-        reflectTarget = null;
+        sceneTarget = null;
         pmremTarget = null;
-        reflectionCamera = null;
         scene.onBeforeRender = () => undefined;
         oceanMesh = null;
         if (root) {
@@ -599,10 +560,13 @@ export function createOceanFeature(): RuntimeFeature {
     },
 
     update(context): void {
-      if (!oceanUniforms || !sky || !oceanMesh || !scene || !reflectTarget || !reflectionCamera) {
+      if (!oceanUniforms || !sky || !oceanMesh || !scene || !sceneTarget) {
         return;
       }
       oceanUniforms.uTime.value = context.frame.elapsedSeconds;
+      oceanUniforms.uCameraNear.value = context.camera.near;
+      oceanUniforms.uCameraFar.value = context.camera.far;
+      oceanUniforms.uProjMatrix.value.copy(context.camera.projectionMatrix);
       if (oceanUniforms.uSunDirection.value.distanceToSquared(lastPmremSun) > 1e-8) {
         rebuildSkyPmrem(context.renderer, sky, oceanUniforms.uSunDirection.value);
       }
@@ -612,16 +576,16 @@ export function createOceanFeature(): RuntimeFeature {
     },
 
     resize(context): void {
-      if (!reflectTarget || !oceanUniforms) {
+      if (!sceneTarget || !oceanUniforms) {
         return;
       }
-      const size = reflectionTextureSize(
+      const size = sceneTextureSize(
         context.viewport.width,
         context.viewport.height,
       );
-      if (reflectTarget.width !== size.width || reflectTarget.height !== size.height) {
-        reflectTarget.setSize(size.width, size.height);
-        oceanUniforms.tReflection.value = reflectTarget.texture;
+      if (sceneTarget.width !== size.width || sceneTarget.height !== size.height) {
+        sceneTarget.setSize(size.width, size.height);
+        bindSceneTarget(sceneTarget);
       }
     },
 
@@ -631,16 +595,12 @@ export function createOceanFeature(): RuntimeFeature {
       unregisterService = null;
 
       detachOwnedEnvironmentTextures();
-      reflectTarget?.dispose();
+      sceneTarget?.dispose();
       pmremTarget?.dispose();
-      reflectTarget = null;
+      sceneTarget = null;
       pmremTarget = null;
-      reflectionCamera = null;
       if (scene) {
         scene.onBeforeRender = () => undefined;
-      }
-      if (oceanMesh) {
-        oceanMesh.onBeforeRender = () => undefined;
       }
       oceanMesh = null;
 
