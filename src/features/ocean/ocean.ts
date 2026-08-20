@@ -67,7 +67,10 @@ void main() {
   vWaveHeight = wave.height;
   vWorldNormal = normalize(mat3(modelMatrix) * localNormal);
   vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
-  vReflectCoord = uReflectionMatrix * vec4(vWorldPosition, 1.0);
+  // Water.js: textureMatrix * rest world position on the y=0 plane, not the
+  // Gerstner-displaced vertex and not mesh UVs.
+  vec4 restWorld = modelMatrix * vec4(position, 1.0);
+  vReflectCoord = uReflectionMatrix * restWorld;
 
   vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
   gl_Position = projectionMatrix * mvPosition;
@@ -156,8 +159,8 @@ void main() {
   vec3 reflectedDirection = normalize(reflect(-viewDirection, normal));
   vec3 envSky = textureCubeUV(envMap, reflectedDirection, 0.0).rgb;
 
-  vec2 reflUv = vReflectCoord.xy / max(vReflectCoord.w, 1e-4);
-  reflUv += normal.xz * uReflectionDistortion * (1.0 - foam);
+  vec2 reflUv = vReflectCoord.xy / max(vReflectCoord.w, 1e-4)
+    + normal.xz * uReflectionDistortion;
   float planarValid = step(1e-4, vReflectCoord.w)
     * smoothstep(0.0, 0.04, reflUv.x)
     * smoothstep(1.0, 0.96, reflUv.x)
@@ -303,7 +306,6 @@ const _clipPlane = new THREE.Vector4();
 const _view = new THREE.Vector3();
 const _target = new THREE.Vector3();
 const _q = new THREE.Vector4();
-const _skyPosition = new THREE.Vector3();
 
 function reflectionTextureSize(width: number, height: number): {
   width: number;
@@ -344,16 +346,22 @@ function createSkyPmrem(
 function updatePlanarReflection(
   renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,
-  camera: THREE.PerspectiveCamera,
+  camera: THREE.Camera,
   oceanMesh: THREE.Mesh,
-  sky: THREE.Mesh,
   reflectionCamera: THREE.PerspectiveCamera,
   renderTarget: THREE.WebGLRenderTarget,
   textureMatrix: THREE.Matrix4,
 ): void {
-  _cameraWorldPosition.setFromMatrixPosition(camera.matrixWorld);
-  _reflectorNormal.set(0, 1, 0);
-  _reflectorWorldPosition.set(0, OCEAN_SURFACE_LEVEL, 0);
+  if (!(camera instanceof THREE.PerspectiveCamera)) {
+    return;
+  }
+  const perspectiveCamera = camera;
+  oceanMesh.updateMatrixWorld();
+  _reflectorWorldPosition.setFromMatrixPosition(oceanMesh.matrixWorld);
+  _cameraWorldPosition.setFromMatrixPosition(perspectiveCamera.matrixWorld);
+  _rotationMatrix.extractRotation(oceanMesh.matrixWorld);
+  _reflectorNormal.set(0, 0, 1);
+  _reflectorNormal.applyMatrix4(_rotationMatrix);
 
   _view.subVectors(_reflectorWorldPosition, _cameraWorldPosition);
   if (_view.dot(_reflectorNormal) > 0) {
@@ -363,7 +371,7 @@ function updatePlanarReflection(
   _view.reflect(_reflectorNormal).negate();
   _view.add(_reflectorWorldPosition);
 
-  _rotationMatrix.extractRotation(camera.matrixWorld);
+  _rotationMatrix.extractRotation(perspectiveCamera.matrixWorld);
   _lookAtPosition.set(0, 0, -1);
   _lookAtPosition.applyMatrix4(_rotationMatrix);
   _lookAtPosition.add(_cameraWorldPosition);
@@ -374,15 +382,12 @@ function updatePlanarReflection(
 
   reflectionCamera.position.copy(_view);
   reflectionCamera.up.set(0, 1, 0);
+  reflectionCamera.up.applyMatrix4(_rotationMatrix);
   reflectionCamera.up.reflect(_reflectorNormal);
   reflectionCamera.lookAt(_target);
-  reflectionCamera.fov = camera.fov;
-  reflectionCamera.aspect = camera.aspect;
-  reflectionCamera.near = camera.near;
-  reflectionCamera.far = camera.far;
-  reflectionCamera.updateProjectionMatrix();
+  reflectionCamera.far = perspectiveCamera.far;
   reflectionCamera.updateMatrixWorld();
-  reflectionCamera.projectionMatrix.copy(camera.projectionMatrix);
+  reflectionCamera.projectionMatrix.copy(perspectiveCamera.projectionMatrix);
 
   textureMatrix.set(
     0.5, 0.0, 0.0, 0.5,
@@ -413,41 +418,29 @@ function updatePlanarReflection(
   projectionMatrix.elements[10] = _clipPlane.z + 1.0 - REFLECT_CLIP_BIAS;
   projectionMatrix.elements[14] = _clipPlane.w;
 
-  const namedOcean = scene.getObjectByName('animated-ocean-surface');
-  const previousVisible = oceanMesh.visible;
-  const previousNamedVisible = namedOcean ? namedOcean.visible : true;
-  _skyPosition.copy(sky.position);
-  oceanMesh.visible = false;
-  if (namedOcean) {
-    namedOcean.visible = false;
-  }
-  sky.position.copy(reflectionCamera.position);
-
   const currentRenderTarget = renderer.getRenderTarget();
   const currentXrEnabled = renderer.xr.enabled;
   const currentShadowAutoUpdate = renderer.shadowMap.autoUpdate;
-  const currentToneMapping = renderer.toneMapping;
-  const currentOutputColorSpace = renderer.outputColorSpace;
-
+  oceanMesh.visible = false;
   renderer.xr.enabled = false;
   renderer.shadowMap.autoUpdate = false;
-  renderer.toneMapping = THREE.NoToneMapping;
-  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
   renderer.setRenderTarget(renderTarget);
   renderer.state.buffers.depth.setMask(true);
+  if (renderer.autoClear === false) {
+    renderer.clear();
+  }
   renderer.render(scene, reflectionCamera);
-
+  oceanMesh.visible = true;
   renderer.xr.enabled = currentXrEnabled;
   renderer.shadowMap.autoUpdate = currentShadowAutoUpdate;
-  renderer.toneMapping = currentToneMapping;
-  renderer.outputColorSpace = currentOutputColorSpace;
   renderer.setRenderTarget(currentRenderTarget);
 
-  oceanMesh.visible = previousVisible;
-  if (namedOcean) {
-    namedOcean.visible = previousNamedVisible;
+  const viewport = (perspectiveCamera as THREE.PerspectiveCamera & {
+    viewport?: THREE.Vector4;
+  }).viewport;
+  if (viewport !== undefined) {
+    renderer.state.viewport(viewport);
   }
-  sky.position.copy(_skyPosition);
 }
 
 export function createOceanFeature(): RuntimeFeature {
@@ -561,6 +554,21 @@ export function createOceanFeature(): RuntimeFeature {
         oceanMesh.name = 'animated-ocean-surface';
         oceanMesh.rotation.x = -Math.PI / 2;
         oceanMesh.frustumCulled = false;
+        const reflectionMesh = oceanMesh;
+        reflectionMesh.onBeforeRender = (renderer, renderScene, camera) => {
+          if (!oceanUniforms || !reflectTarget || !reflectionCamera) {
+            return;
+          }
+          updatePlanarReflection(
+            renderer,
+            renderScene,
+            camera,
+            reflectionMesh,
+            reflectionCamera,
+            reflectTarget,
+            oceanUniforms.uReflectionMatrix.value,
+          );
+        };
         root.add(oceanMesh);
         scene.add(root);
 
@@ -615,16 +623,6 @@ export function createOceanFeature(): RuntimeFeature {
       // Keep the dome centered on the viewer without taking ownership of the
       // camera or changing any camera transform.
       sky.position.copy(context.camera.position);
-      updatePlanarReflection(
-        context.renderer,
-        scene,
-        context.camera,
-        oceanMesh,
-        sky,
-        reflectionCamera,
-        reflectTarget,
-        oceanUniforms.uReflectionMatrix.value,
-      );
     },
 
     resize(context): void {
@@ -652,6 +650,9 @@ export function createOceanFeature(): RuntimeFeature {
       reflectTarget = null;
       pmremTarget = null;
       reflectionCamera = null;
+      if (oceanMesh) {
+        oceanMesh.onBeforeRender = () => undefined;
+      }
       oceanMesh = null;
 
       if (root && scene) {
