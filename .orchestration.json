@@ -1,0 +1,25 @@
+{
+  "project": "water",
+  "integrationBranch": "main",
+  "orchestrator": {
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "max"
+  },
+  "workers": {
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "max",
+    "defaultConcurrency": 4,
+    "lanes": [
+      "foundation",
+      "ocean-rendering",
+      "raft-systems",
+      "world-qa"
+    ]
+  },
+  "mergeChecks": [
+    "git status --short",
+    "npm run build",
+    "browser smoke test",
+    "visual review when rendering changes"
+  ]
+}
