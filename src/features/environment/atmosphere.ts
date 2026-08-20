@@ -198,8 +198,8 @@ function addIsland(
 
 function addLighthouse(parent: THREE.Group, materials: MarineMaterials): void {
   const lighthouse = new THREE.Group();
-  lighthouse.position.set(-9, 0.18, -112);
-  lighthouse.scale.setScalar(0.96);
+  lighthouse.position.set(-9, 0.18, -200);
+  lighthouse.scale.setScalar(0.84);
   parent.add(lighthouse);
 
   const foundation = new THREE.Mesh(
@@ -276,7 +276,7 @@ export function createMarineEnvironment(
   const hemisphere = new THREE.HemisphereLight(0x9bc6d4, 0x102c32, 1.65);
   root.add(hemisphere);
 
-  addIsland(root, materials, -13, -117, 1.22, true);
+  addIsland(root, materials, -13, -205, 1.04, true);
   addIsland(root, materials, -91, -154, 1.55, true);
   addIsland(root, materials, 57, -178, 1.06, true);
   addIsland(root, materials, 130, -145, 0.72, false);
