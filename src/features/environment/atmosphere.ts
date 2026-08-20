@@ -19,6 +19,20 @@ const SKY_FRAGMENT_SHADER = /* glsl */ `
 uniform vec3 uSunDirection;
 varying vec3 vSkyDirection;
 
+#include <common>
+#include <dithering_pars_fragment>
+
+const float THREE_OVER_SIXTEEN_PI = 0.05968310366;
+const float ONE_OVER_FOUR_PI = 0.07957747155;
+const float MIE_DIRECTIONAL_G = 0.78;
+
+// Spectral coefficients for clear maritime air.  The values are scaled to
+// this scene's compact world while preserving the lambda^-4 blue bias.
+const vec3 RAYLEIGH_BETA = vec3(5.8045e-3, 1.3563e-2, 3.0266e-2);
+const vec3 MIE_BETA = vec3(1.62e-2, 1.52e-2, 1.38e-2);
+const float RAYLEIGH_ZENITH_LENGTH = 0.84;
+const float MIE_ZENITH_LENGTH = 0.125;
+
 float hash21(vec2 point) {
   point = fract(point * vec2(123.34, 456.21));
   point += dot(point, point + 45.32);
@@ -47,37 +61,107 @@ float cloudNoise(vec2 point) {
   return value;
 }
 
+float rayleighPhase(float cosine) {
+  return THREE_OVER_SIXTEEN_PI * (1.0 + cosine * cosine);
+}
+
+float miePhase(float cosine) {
+  float g2 = MIE_DIRECTIONAL_G * MIE_DIRECTIONAL_G;
+  float denominator = pow(1.0 - 2.0 * MIE_DIRECTIONAL_G * cosine + g2, 1.5);
+  return ONE_OVER_FOUR_PI * (1.0 - g2) / max(denominator, 0.001);
+}
+
+// Kasten-style air mass approximation: finite at the horizon, yet much
+// denser there than at zenith, which supplies the aerial-perspective cue.
+float opticalAirMass(float zenithCosine) {
+  float cosine = clamp(zenithCosine, 0.0, 1.0);
+  float angleFromZenith = degrees(acos(cosine));
+  float denominator = cosine + 0.15 * pow(max(93.885 - angleFromZenith, 0.001), -1.253);
+  return 1.0 / max(denominator, 0.025);
+}
+
+float sunIntensity(float zenithCosine) {
+  const float cutoffAngle = 1.61107315569;
+  const float steepness = 1.5;
+  const float solarIrradiance = 1000.0;
+  float angle = acos(clamp(zenithCosine, -1.0, 1.0));
+  return solarIrradiance * max(0.0, 1.0 - exp(-((cutoffAngle - angle) / steepness)));
+}
+
 void main() {
   vec3 direction = normalize(vSkyDirection);
-  float altitude = clamp(direction.y * 0.5 + 0.5, 0.0, 1.0);
-  vec3 horizonColor = vec3(0.36, 0.58, 0.65);
-  vec3 zenithColor = vec3(0.045, 0.15, 0.25);
-  vec3 skyColor = mix(horizonColor, zenithColor, smoothstep(0.30, 0.90, altitude));
+  vec3 sunDirection = normalize(uSunDirection);
+  float viewZenithCosine = max(direction.y, 0.0);
+  float sunZenithCosine = max(sunDirection.y, 0.0);
+  float viewAirMass = opticalAirMass(viewZenithCosine);
+  float sunAirMass = opticalAirMass(sunZenithCosine);
 
-  vec2 cloudCoordinates = vec2(atan(direction.z, direction.x) * 0.75, direction.y * 3.6);
-  float cloudFar = cloudNoise(cloudCoordinates * 1.85 + vec2(2.4, -0.7));
-  float cloudNear = cloudNoise(cloudCoordinates * 5.4 - vec2(4.8, 1.9));
-  float cloudEnvelope = smoothstep(0.08, 0.28, altitude)
-    * (1.0 - smoothstep(0.72, 0.94, altitude));
-  float farCloudBand = smoothstep(0.43, 0.70, cloudFar) * cloudEnvelope;
-  float nearCloudBand = smoothstep(0.52, 0.80, cloudNear)
-    * smoothstep(0.15, 0.34, altitude)
-    * (1.0 - smoothstep(0.64, 0.86, altitude));
-  skyColor = mix(skyColor, vec3(0.70, 0.78, 0.79), farCloudBand * 0.52);
-  skyColor = mix(skyColor, vec3(0.88, 0.89, 0.84), nearCloudBand * 0.42);
+  // Single-scattering estimate inspired by Preetham's daylight fit, with
+  // Bruneton-style extinction along both the view and sun paths.
+  vec3 betaR = RAYLEIGH_BETA;
+  vec3 betaM = MIE_BETA;
+  vec3 extinction = exp(-(betaR * RAYLEIGH_ZENITH_LENGTH * (viewAirMass + sunAirMass)
+    + betaM * MIE_ZENITH_LENGTH * (viewAirMass + sunAirMass)));
+  float cosineToSun = dot(direction, sunDirection);
+  float rayleigh = rayleighPhase(cosineToSun);
+  // Aerosol scattering stays directional, but is scaled to avoid a broad
+  // white patch when the host renderer is using its neutral tone mapper.
+  float mie = miePhase(cosineToSun) * 0.24;
+  float sunEnergy = sunIntensity(sunZenithCosine);
+  vec3 scattering = sunEnergy * (betaR * rayleigh + betaM * mie) / (betaR + betaM);
+  vec3 inScattering = pow(max(scattering * (1.0 - extinction), vec3(0.0)), vec3(1.12));
 
-  float lowMist = smoothstep(0.28, 0.52, altitude) * (1.0 - smoothstep(0.52, 0.76, altitude));
-  skyColor += vec3(0.07, 0.11, 0.12) * lowMist;
+  // A low, lightly hazed sun shifts the horizon toward warm sea-air blue;
+  // the term is intentionally restrained so fog can remain the final depth cue.
+  float horizon = 1.0 - smoothstep(0.0, 0.34, max(direction.y, 0.0));
+  vec3 horizonAerialTint = mix(vec3(0.34, 0.51, 0.57), vec3(0.64, 0.53, 0.39),
+    smoothstep(-0.02, 0.26, sunDirection.y));
+  vec3 skyColor = inScattering * 0.041;
+  skyColor += extinction * mix(vec3(0.010, 0.026, 0.052), horizonAerialTint * 0.12, horizon);
+  skyColor += horizonAerialTint * horizon * horizon * 0.055;
 
-  float sunAlignment = max(dot(direction, normalize(uSunDirection)), 0.0);
-  float sunHalo = pow(sunAlignment, 16.0) * 0.045
-    + pow(sunAlignment, 44.0) * 0.12
-    + pow(sunAlignment, 150.0) * 0.34;
-  float sunDisc = smoothstep(0.9992, 0.99995, sunAlignment);
-  skyColor += vec3(1.0, 0.52, 0.22) * sunHalo;
-  skyColor = mix(skyColor, vec3(1.0, 0.88, 0.62), sunDisc * 0.78);
+  // Two correlated, four-octave cloud fields give broad bodies and small
+  // structure without a texture lookup or an unbounded ray-march.
+  vec2 cloudCoordinates = vec2(atan(direction.z, direction.x) * 0.72, direction.y * 3.9);
+  float cloudFar = cloudNoise(cloudCoordinates * 1.72 + vec2(2.4, -0.7));
+  float cloudNear = cloudNoise(cloudCoordinates * 5.1 - vec2(4.8, 1.9));
+  float cloudEnvelope = smoothstep(0.055, 0.17, max(direction.y, 0.0))
+    * (1.0 - smoothstep(0.68, 0.91, max(direction.y, 0.0)));
+  float cloudBody = smoothstep(0.43, 0.70, cloudFar);
+  float cloudDetail = smoothstep(0.47, 0.77, cloudNear);
+  float cloudDensity = clamp(mix(cloudBody, cloudDetail, 0.30) * cloudEnvelope, 0.0, 1.0);
+  vec2 sunCloudOffset = normalize(sunDirection.xz + vec2(0.0001)) * 0.19;
+  float cloudShadowNoise = noise2(cloudCoordinates * 3.25 - sunCloudOffset * 2.4 + vec2(7.1, -3.6));
+  float cloudSelfShadow = smoothstep(0.34, 0.70, cloudShadowNoise);
+  float sunFacingCloud = clamp(dot(direction, sunDirection) * 0.5 + 0.5, 0.0, 1.0);
+  float cloudLight = mix(0.30, 0.92, sunFacingCloud) * mix(0.58, 1.0, cloudSelfShadow);
+  vec3 cloudShadowColor = vec3(0.26, 0.31, 0.33);
+  vec3 cloudSunColor = vec3(0.94, 0.86, 0.72);
+  vec3 cloudColor = mix(cloudShadowColor, cloudSunColor, cloudLight);
+  skyColor = mix(skyColor, cloudColor, cloudDensity * 0.68);
+  float cloudEdge = smoothstep(0.08, 0.36, cloudDensity)
+    * (1.0 - smoothstep(0.36, 0.78, cloudDensity));
+  float silverLining = pow(max(cosineToSun, 0.0), 20.0) * cloudEdge * 0.14;
+  skyColor += vec3(1.0, 0.82, 0.58) * silverLining;
 
-  gl_FragColor = vec4(skyColor, 1.0);
+  // 0.53 degree apparent solar diameter (0.265 degree radius), with a
+  // narrow analytic edge instead of a large, blown-out painted blob.
+  const float SUN_DISC_EDGE_COS = 0.9999850;
+  const float SUN_DISC_FULL_COS = 0.9999930;
+  float sunDisc = smoothstep(SUN_DISC_EDGE_COS, SUN_DISC_FULL_COS, cosineToSun);
+  float sunHalo = pow(max(cosineToSun, 0.0), 18.0) * 0.008
+    + pow(max(cosineToSun, 0.0), 64.0) * 0.024
+    + pow(max(cosineToSun, 0.0), 180.0) * 0.052;
+  float discVisibility = 1.0 - cloudDensity * 0.78;
+  skyColor += vec3(1.0, 0.53, 0.20) * sunHalo * discVisibility;
+  skyColor += vec3(8.0, 4.4, 1.45) * sunDisc * discVisibility;
+
+  // Keep the shader in linear-sRGB scene space; Three.js applies the active
+  // renderer tone mapper and final sRGB transform through these chunks.
+  gl_FragColor = vec4(max(skyColor, vec3(0.0)), 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+  #include <dithering_fragment>
 }
 `;
 
@@ -87,43 +171,48 @@ interface MarineMaterials {
   readonly islandVegetation: THREE.MeshStandardMaterial;
   readonly lighthouse: THREE.MeshStandardMaterial;
   readonly lighthouseTrim: THREE.MeshStandardMaterial;
-  readonly lighthouseGlow: THREE.MeshBasicMaterial;
+  readonly lighthouseGlow: THREE.MeshStandardMaterial;
 }
 
 function createMarineMaterials(): MarineMaterials {
   return {
     islandRock: new THREE.MeshStandardMaterial({
       color: 0x2e555a,
-      roughness: 1,
+      roughness: 0.94,
       metalness: 0,
-      flatShading: true,
+      flatShading: false,
     }),
     islandShadow: new THREE.MeshStandardMaterial({
       color: 0x193b43,
-      roughness: 1,
+      roughness: 0.98,
       metalness: 0,
-      flatShading: true,
+      flatShading: false,
     }),
     islandVegetation: new THREE.MeshStandardMaterial({
       color: 0x25564a,
-      roughness: 1,
+      roughness: 0.91,
       metalness: 0,
-      flatShading: true,
+      flatShading: false,
     }),
     lighthouse: new THREE.MeshStandardMaterial({
       color: 0xe0d1b3,
-      roughness: 0.9,
+      roughness: 0.66,
       metalness: 0,
-      flatShading: true,
+      flatShading: false,
     }),
     lighthouseTrim: new THREE.MeshStandardMaterial({
       color: 0x3e4d4c,
-      roughness: 0.82,
-      metalness: 0.08,
-      flatShading: true,
+      roughness: 0.34,
+      metalness: 0.28,
+      flatShading: false,
     }),
-    lighthouseGlow: new THREE.MeshBasicMaterial({
+    lighthouseGlow: new THREE.MeshStandardMaterial({
       color: 0xffe3a6,
+      emissive: 0xffb54a,
+      emissiveIntensity: 1.8,
+      roughness: 0.28,
+      metalness: 0,
+      flatShading: false,
     }),
   };
 }
@@ -237,9 +326,20 @@ function addLighthouse(parent: THREE.Group, materials: MarineMaterials): void {
   roof.position.y = 11.08;
   lighthouse.add(roof);
 
-  const beacon = new THREE.PointLight(0xffd991, 6, 70, 2);
+  const beacon = new THREE.PointLight(0xffd991, 7, 70, 2);
   beacon.position.set(0, 10.05, 0);
   lighthouse.add(beacon);
+}
+
+function configureEnvironmentShadows(root: THREE.Group, sky: THREE.Mesh): void {
+  sky.castShadow = false;
+  sky.receiveShadow = false;
+  root.traverse((object) => {
+    if (object instanceof THREE.Mesh && object !== sky) {
+      object.castShadow = true;
+      object.receiveShadow = true;
+    }
+  });
 }
 
 export function createMarineEnvironment(
@@ -248,10 +348,11 @@ export function createMarineEnvironment(
   const root = new THREE.Group();
   root.name = 'marine-environment';
   const materials = createMarineMaterials();
+  const normalizedSunDirection = sunDirection.clone().normalize();
 
   const skyMaterial = new THREE.ShaderMaterial({
     uniforms: {
-      uSunDirection: { value: sunDirection.clone().normalize() },
+      uSunDirection: { value: normalizedSunDirection.clone() },
     },
     vertexShader: SKY_VERTEX_SHADER,
     fragmentShader: SKY_FRAGMENT_SHADER,
@@ -259,33 +360,49 @@ export function createMarineEnvironment(
     depthWrite: false,
     depthTest: false,
     fog: false,
+    dithering: true,
+    toneMapped: true,
   });
-  const skyGeometry = new THREE.SphereGeometry(600, 48, 24);
+  const skyGeometry = new THREE.SphereGeometry(600, 96, 48);
   const sky = new THREE.Mesh(skyGeometry, skyMaterial);
   sky.name = 'marine-sky-dome';
   sky.frustumCulled = false;
   sky.renderOrder = -100;
   root.add(sky);
 
-  const sun = new THREE.DirectionalLight(0xffe8bf, 3.15);
-  sun.position.copy(sunDirection).multiplyScalar(90);
+  const sun = new THREE.DirectionalLight(0xffd8b5, 2.85);
+  sun.position.copy(normalizedSunDirection).multiplyScalar(180);
   sun.target.position.set(0, 0, -40);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 520;
+  sun.shadow.camera.left = -220;
+  sun.shadow.camera.right = 220;
+  sun.shadow.camera.top = 160;
+  sun.shadow.camera.bottom = -160;
+  sun.shadow.bias = -0.0006;
+  sun.shadow.normalBias = 0.08;
+  sun.shadow.radius = 2;
+  sun.shadow.camera.updateProjectionMatrix();
   root.add(sun.target);
   root.add(sun);
 
-  const hemisphere = new THREE.HemisphereLight(0x9bc6d4, 0x102c32, 1.65);
+  const hemisphere = new THREE.HemisphereLight(0x8dbdce, 0x16282d, 0.82);
   root.add(hemisphere);
 
+  // Destination positions intentionally remain unchanged from OCE-005.
   addIsland(root, materials, -13, -205, 1.04, true);
   addIsland(root, materials, -91, -154, 1.55, true);
   addIsland(root, materials, 57, -178, 1.06, true);
   addIsland(root, materials, 130, -145, 0.72, false);
   addIsland(root, materials, -149, -190, 0.8, false);
   addLighthouse(root, materials);
+  configureEnvironmentShadows(root, sky);
 
   return {
     root,
     sky,
-    sunDirection: sunDirection.clone().normalize(),
+    sunDirection: normalizedSunDirection,
   };
 }
