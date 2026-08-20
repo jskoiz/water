@@ -81,6 +81,10 @@ export class Runtime {
     });
     this.renderer.setClearColor(this.config.clearColor);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.08;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.timer = new THREE.Timer();
     this.timer.connect(document);
 
