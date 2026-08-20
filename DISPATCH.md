@@ -2,7 +2,7 @@
 
 This is the coordinator-owned source of truth for implementation dispatches. A task marked `ready` is queued for a future worker; it is not active until the coordinator records a worker thread, branch, worktree, and base commit.
 
-`FND-001` is integrated. `RAFT-001` and `QA-001` are in coordinator review. `OCE-001` was blocked before mutation by its worktree policy, and replacement lane `OCE-002` is active in a workspace-owned isolated worktree.
+`FND-001`, `RAFT-001`, and `QA-001` are integrated. `OCE-001` was blocked before mutation by its worktree policy, and replacement lane `OCE-002` is active in a workspace-owned isolated worktree.
 
 Every implementation dispatch uses `gpt-5.6-luna` at `max` reasoning effort and contains exactly one lane plus the exclusive write scope recorded below.
 
@@ -19,8 +19,8 @@ Use `blocked` whenever a dependency or acceptance decision prevents dispatch. On
 | `FND-001` | `foundation` | `integrated` | None | `/root/foundation_fnd001` | `c1/foundation-bootstrap` / `/private/tmp/water-fnd001` / base `e207233` | `package.json`; `package-lock.json`; `index.html`; `vite.config.*`; `tsconfig*.json`; `src/main.*`; `src/runtime/**` |
 | `OCE-001` | `ocean-rendering` | `blocked` | Workspace policy rejected writes before mutation | `/root/ocean_oce001` | `c1/ocean-rendering` / `/private/tmp/water-oce001` / base `ccfc531` | No changes; superseded by `OCE-002` |
 | `OCE-002` | `ocean-rendering` | `active` | `OCE-001` clean blocker; foundation/runtime reviewed | `/root/ocean_oce002` | `c1/ocean-rendering-2` / `/Users/jk/Desktop/water/.worktrees/oce002` / base `4860d54` | `src/features/ocean/**`; `src/features/environment/**`; `public/ocean/**`; `tests/ocean/**` |
-| `RAFT-001` | `raft-systems` | `review` | `FND-001` integrated and runtime contracts reviewed at `ccfc531` | `/root/raft_raft001` | `c1/raft-systems` / `/private/tmp/water-raft001` / base `ccfc531` | `src/features/raft/**`; `public/raft/**`; `tests/raft/**` |
-| `QA-001` | `world-qa` | `review` | `FND-001` integrated; dev URL `http://127.0.0.1:5173`; Codex In-app Browser runner | `/root/qa_qa001` | `c1/world-qa-smoke` / `/private/tmp/water-qa001` / base `ccfc531` | `qa/**` |
+| `RAFT-001` | `raft-systems` | `integrated` | `FND-001` integrated and runtime contracts reviewed at `ccfc531` | `/root/raft_raft001` | `c1/raft-systems` / `/private/tmp/water-raft001` / base `ccfc531` | `src/features/raft/**`; `public/raft/**`; `tests/raft/**` |
+| `QA-001` | `world-qa` | `integrated` | `FND-001` integrated; dev URL `http://127.0.0.1:5173`; Codex In-app Browser runner | `/root/qa_qa001` | `c1/world-qa-smoke` / `/private/tmp/water-qa001` / base `ccfc531` | `qa/**` |
 
 Paths not listed in a worker's row are out of scope. Dependency or shared-file changes are returned to the coordinator for a separate dispatch; workers do not widen their own scope.
 
@@ -108,5 +108,5 @@ At handoff, record:
 | `FND-001` | `e207233` | `eae02dd`, `804a3b4` | Scope and full diff reviewed; deprecated Clock warning returned and fixed | `npm ci`; typecheck; build; initial browser canvas boot; Timer source/direct smoke | `ccfc531` | Integrated locally; expected Three.js bundle-size warning remains. |
 | `OCE-001` | `ccfc531` | None | Clean base confirmed; no diff to review | Not run; blocked before implementation | _Not merged_ | Superseded after `/private/tmp` write policy rejected both patch attempts. |
 | `OCE-002` | `4860d54` | _Active_ | _Pending handoff_ | _Pending handoff_ | _Not merged_ | Replacement workspace-owned lane; owns `ocean.surface.v1` and ocean/environment assets. |
-| `RAFT-001` | `ccfc531` | `d995cc3` | _Coordinator review active_ | Worker: npm ci, typecheck, build, diff checks, asset hashes | _Not merged_ | Requires live integration with `ocean.surface.v1`; browser proof remains. |
-| `QA-001` | `ccfc531` | `ea7d849` | _Coordinator review active_ | Worker: syntax/import/fixture checks; no-server preflight correctly failed | _Not merged_ | Successful HTTP path and final In-app Browser run remain coordinator gates. |
+| `RAFT-001` | `ccfc531` | `d995cc3` | Full scope/diff and lifecycle review passed; asset hashes match | Worker and coordinator: typecheck/build; diff checks | `c6e6d52` | Live integration with `ocean.surface.v1` and browser proof remain. |
+| `QA-001` | `ccfc531` | `ea7d849` | Full scope/diff review passed; seven Water markers defaulted | Worker and coordinator: syntax/import checks; no-server preflight correctly failed | `e200361` | Successful HTTP path and final In-app Browser run remain coordinator gates. |
