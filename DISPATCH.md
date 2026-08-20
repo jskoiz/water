@@ -2,7 +2,7 @@
 
 This is the coordinator-owned source of truth for implementation dispatches. A task marked `ready` is queued for a future worker; it is not active until the coordinator records a worker thread, branch, worktree, and base commit.
 
-Foundation, first-pass features, QA, fog repair, first visual-polish lanes, and the second screenshot's narrow horizon-scale and camera-framing corrections are integrated. The three research-backed physical-water lanes from clean baseline `d90be9d` and their optical, atmosphere, wake, and spectrum repairs are integrated. Fresh-load comparison opened one final raft startup-waterline repair lane from the fully integrated build.
+Foundation, first-pass features, QA, fog repair, visual-polish lanes, the research-backed physical-water round, and every screenshot-driven optical, atmosphere, wake, spectrum, and startup-waterline repair are integrated and accepted locally.
 
 Every implementation dispatch uses `gpt-5.6-luna` at `max` reasoning effort and contains exactly one lane plus the exclusive write scope recorded below.
 
@@ -32,7 +32,7 @@ Use `blocked` whenever a dependency or acceptance decision prevents dispatch. On
 | `RAFT-003` | `raft-systems` | `integrated` | Second screenshot clipped deck/hull below viewport | `/root/raft_raft003` | `c1/raft-framing-fix` / `/Users/jk/Desktop/water/.worktrees/raft003` / base `3e7bfb7` | `src/features/raft/raft.ts` |
 | `RAFT-004` | `raft-systems` | `integrated` | Accepted baseline `d90be9d`; marine-response research complete | `/root/raft_raft004` | `c1/raft-physical-response` / `/Users/jk/Desktop/water/.worktrees/raft004` / base `d90be9d` | `src/features/raft/raft.ts` |
 | `RAFT-005` | `raft-systems` | `integrated` | Integrated `RAFT-004` frame showed geometric wake wedges | `/root/raft_raft004` | `c1/raft-wake-optical-tuning` / `/Users/jk/Desktop/water/.worktrees/raft005` / base `a48a091` | `src/features/raft/raft.ts` |
-| `RAFT-006` | `raft-systems` | `active` | Fully integrated fresh load showed transient hull submersion | `/root/raft_raft004` | `c1/raft-initial-waterline` / `/Users/jk/Desktop/water/.worktrees/raft006` / base `dd36163` | `src/features/raft/raft.ts` |
+| `RAFT-006` | `raft-systems` | `integrated` | Fully integrated fresh load showed transient hull submersion | `/root/raft_raft004` | `c1/raft-initial-waterline` / `/Users/jk/Desktop/water/.worktrees/raft006` / base `dd36163` | `src/features/raft/raft.ts` |
 | `QA-001` | `world-qa` | `integrated` | `FND-001` integrated; dev URL `http://127.0.0.1:5173`; Codex In-app Browser runner | `/root/qa_qa001` | `c1/world-qa-smoke` / `/private/tmp/water-qa001` / base `ccfc531` | `qa/**` |
 
 Paths not listed in a worker's row are out of scope. Dependency or shared-file changes are returned to the coordinator for a separate dispatch; workers do not widen their own scope.
@@ -162,6 +162,18 @@ The coordinator tested source commit `ca882e9` from the main checkout at `http:/
 - Three.js `WebGLRenderer`, color-management, `Water`, and `PMREMGenerator` documentation: sRGB output, tone mapping, shadow-map integration, water reflection inputs, and physically based environment filtering.
 - Thor I. Fossen's marine-craft model: restoring forces, added-mass intuition, and positive hydrodynamic damping for stable real-time heave/roll/pitch response.
 
+## Physical-water integrated acceptance
+
+The coordinator tested source commit `a786e76` from the main checkout after a clean dev-server restart at `http://127.0.0.1:5173/`.
+
+- `npm run typecheck`, `npm run build`, all six focused ocean tests, full committed diff hygiene, and the HTTP document/mount/module smoke passed. The existing Vite large-chunk advisory remains non-fatal.
+- A fresh Codex In-app Browser tab rendered a complete raft on the first sampled waterline; the rejected startup frame no longer hides the deck/hull while the spring settles.
+- Desktop evidence used a native `1586x992` CSS/backing canvas with no page overflow, no visible alert/error overlay, and no warning/error console entry after live GPU shader compilation.
+- Canvas focus, a representative `W` input, and a pointer drag completed without a runtime warning/error; the focused element remained the Water canvas.
+- Mobile evidence used a `390x844` CSS/backing canvas with no page overflow, no visible alert/error overlay, and no warning/error console entry.
+- Accepted screenshots: `/Users/jk/.codex/visualizations/2026/08/20/01a01c90-8bec-75d2-93f7-b299a7f64d01/water-realism-final-desktop.png` and `/Users/jk/.codex/visualizations/2026/08/20/01a01c90-8bec-75d2-93f7-b299a7f64d01/water-realism-final-mobile.png`.
+- Performance acceptance remains deferred because no device/browser profile, measurement method, or budget was agreed.
+
 ## Shared and coordinator-owned paths
 
 The coordinator owns `AGENTS.md`, `ORCHESTRATOR.md`, `DISPATCH.md`, `.orchestration.json`, `README.md`, integration composition after `FND-001`, and shared manifest/configuration edits after `FND-001`. A worker that needs one of these paths must stop and request a separately recorded scope change.
@@ -208,5 +220,5 @@ At handoff, record:
 | `RAFT-003` | `3e7bfb7` | `0fb8141` | Exact raft-only diff reviewed; existing target and drag-look controls preserved | Worker and coordinator: typecheck/build/diff check; worker 1586x992 mast/hull framing assertion | `ca882e9` | Final desktop screenshot accepted the complete raft framing. |
 | `RAFT-004` | `d90be9d` | `4738043` | Exact one-file scope and full spring/contact/wake/lifecycle diff reviewed | Worker and coordinator: typecheck; build; diff check; worker numerical bounds and desktop/mobile browser | `ca4b6cb` | Integrated locally; remains a bounded reduced-order marine model rather than a full fluid solver. |
 | `RAFT-005` | `a48a091` | `c3d7fd5`, `9a9751a`, `f98d66a` | Exact one-file wake diff reviewed; coordinator rejected and corrected missing fog uniforms plus duplicate shader declarations | Worker and coordinator: typecheck; build; diff check; static chunk expansion; fresh live GPU compile and clean new-tab console | `b6d7ea5`, `cb8cecc` | Integrated locally; startup waterline transient was outside wake scope and assigned to `RAFT-006`. |
-| `RAFT-006` | `dd36163` | _Active_ | One-file first-sample equilibrium repair dispatched from the authoritative fresh-load frame | _Pending handoff_ | _Not merged_ | Initialization only; ongoing spring/contact/wake behavior must remain unchanged. |
+| `RAFT-006` | `dd36163` | `59b47e7` | Exact one-file initialization diff reviewed; all ongoing spring/contact/wake constants and paths preserved | Worker and coordinator: typecheck; build; diff check; clean-server fresh-load desktop/mobile Browser and console | `a786e76` | Integrated and accepted locally; reduced-order fluid response remains intentionally bounded rather than a full solver. |
 | `QA-001` | `ccfc531` | `ea7d849` | Full scope/diff review passed; seven Water markers defaulted | Worker and coordinator: syntax/import checks; HTTP smoke; desktop/mobile In-app Browser evidence; input and resize | `e200361` | Final functional and visual smoke passed; performance budgets remain intentionally deferred. |
