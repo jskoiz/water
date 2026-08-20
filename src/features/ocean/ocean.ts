@@ -513,9 +513,11 @@ export function createOceanFeature(): RuntimeFeature {
         scene.add(root);
         const surface = oceanMesh;
         let renderingPrepass = false;
-        // Water.js style: fire after this mesh is already in the main render
-        // list so the 12-component Gerstner surface still draws this frame.
-        surface.onBeforeRender = (renderer, renderScene, camera) => {
+        // Prepass lives on the scene, not the Gerstner mesh: hide, capture
+        // color+depth, unhide in finally, then the main list draws the
+        // 12-component displaced surface. Do not touch visible from the
+        // mesh's own onBeforeRender.
+        scene.onBeforeRender = (renderer, renderScene, camera) => {
           if (renderingPrepass || !sceneTarget) {
             return;
           }
