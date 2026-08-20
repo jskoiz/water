@@ -275,7 +275,12 @@ export function createOceanFeature(): RuntimeFeature {
         };
 
         const oceanMaterial = new THREE.ShaderMaterial({
-          uniforms: oceanUniforms,
+          // Fog uniforms are cloned per material; custom uniform records stay
+          // shared with the feature so update() can mutate their live values.
+          uniforms: {
+            ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
+            ...oceanUniforms,
+          },
           vertexShader: OCEAN_VERTEX_SHADER,
           fragmentShader: OCEAN_FRAGMENT_SHADER,
           side: THREE.FrontSide,
