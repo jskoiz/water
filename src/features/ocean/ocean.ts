@@ -370,23 +370,28 @@ function renderScenePrepass(
   const currentShadowAutoUpdate = renderer.shadowMap.autoUpdate;
   const currentToneMapping = renderer.toneMapping;
   const currentOutputColorSpace = renderer.outputColorSpace;
+  // Hide Gerstner for the color+depth capture only. The main draw keeps the
+  // 12-component displaced mesh; leaving this false is the 06f935e fail.
   oceanMesh.visible = false;
-  renderer.xr.enabled = false;
-  renderer.shadowMap.autoUpdate = false;
-  renderer.toneMapping = THREE.NoToneMapping;
-  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-  renderer.setRenderTarget(renderTarget);
-  renderer.state.buffers.depth.setMask(true);
-  if (renderer.autoClear === false) {
-    renderer.clear();
+  try {
+    renderer.xr.enabled = false;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    renderer.setRenderTarget(renderTarget);
+    renderer.state.buffers.depth.setMask(true);
+    if (renderer.autoClear === false) {
+      renderer.clear();
+    }
+    renderer.render(scene, camera);
+  } finally {
+    oceanMesh.visible = true;
+    renderer.xr.enabled = currentXrEnabled;
+    renderer.shadowMap.autoUpdate = currentShadowAutoUpdate;
+    renderer.toneMapping = currentToneMapping;
+    renderer.outputColorSpace = currentOutputColorSpace;
+    renderer.setRenderTarget(currentRenderTarget);
   }
-  renderer.render(scene, camera);
-  oceanMesh.visible = true;
-  renderer.xr.enabled = currentXrEnabled;
-  renderer.shadowMap.autoUpdate = currentShadowAutoUpdate;
-  renderer.toneMapping = currentToneMapping;
-  renderer.outputColorSpace = currentOutputColorSpace;
-  renderer.setRenderTarget(currentRenderTarget);
 }
 
 export function createOceanFeature(): RuntimeFeature {
@@ -506,16 +511,20 @@ export function createOceanFeature(): RuntimeFeature {
         oceanMesh.frustumCulled = false;
         root.add(oceanMesh);
         scene.add(root);
+        const surface = oceanMesh;
         let renderingPrepass = false;
-        scene.onBeforeRender = (renderer, renderScene, camera) => {
-          if (renderingPrepass || !oceanMesh || !sceneTarget) {
+        // Water.js style: fire after this mesh is already in the main render
+        // list so the 12-component Gerstner surface still draws this frame.
+        surface.onBeforeRender = (renderer, renderScene, camera) => {
+          if (renderingPrepass || !sceneTarget) {
             return;
           }
           renderingPrepass = true;
           try {
-            renderScenePrepass(renderer, renderScene, camera, oceanMesh, sceneTarget);
+            renderScenePrepass(renderer, renderScene, camera, surface, sceneTarget);
           } finally {
             renderingPrepass = false;
+            surface.visible = true;
           }
         };
 
@@ -542,6 +551,9 @@ export function createOceanFeature(): RuntimeFeature {
         sceneTarget = null;
         pmremTarget = null;
         scene.onBeforeRender = () => undefined;
+        if (oceanMesh) {
+          oceanMesh.onBeforeRender = () => undefined;
+        }
         oceanMesh = null;
         if (root) {
           scene.remove(root);
@@ -563,6 +575,7 @@ export function createOceanFeature(): RuntimeFeature {
       if (!oceanUniforms || !sky || !oceanMesh || !scene || !sceneTarget) {
         return;
       }
+      oceanMesh.visible = true;
       oceanUniforms.uTime.value = context.frame.elapsedSeconds;
       oceanUniforms.uCameraNear.value = context.camera.near;
       oceanUniforms.uCameraFar.value = context.camera.far;
@@ -601,6 +614,9 @@ export function createOceanFeature(): RuntimeFeature {
       pmremTarget = null;
       if (scene) {
         scene.onBeforeRender = () => undefined;
+      }
+      if (oceanMesh) {
+        oceanMesh.onBeforeRender = () => undefined;
       }
       oceanMesh = null;
 
