@@ -93,13 +93,13 @@ float foamLuma(vec2 uv) {
 vec3 skyRadiance(vec3 direction) {
   vec3 skyDirection = normalize(direction);
   float horizon = smoothstep(-0.12, 0.52, skyDirection.y);
-  vec3 horizonColor = vec3(0.35, 0.58, 0.65);
-  vec3 zenithColor = vec3(0.055, 0.15, 0.29);
+  vec3 horizonColor = vec3(0.15, 0.34, 0.42);
+  vec3 zenithColor = vec3(0.022, 0.078, 0.16);
   vec3 sky = mix(horizonColor, zenithColor, horizon);
 
   float sunAlignment = max(dot(skyDirection, normalize(uSunDirection)), 0.0);
-  sky += vec3(1.0, 0.72, 0.42) * pow(sunAlignment, 256.0) * 2.4;
-  sky += vec3(1.0, 0.43, 0.16) * pow(sunAlignment, 18.0) * 0.055;
+  sky += vec3(1.0, 0.72, 0.42) * pow(sunAlignment, 256.0) * 1.25;
+  sky += vec3(1.0, 0.43, 0.16) * pow(sunAlignment, 28.0) * 0.018;
   return sky;
 }
 
@@ -112,7 +112,7 @@ void main() {
   // roughness. Fade those normals in near the camera where geometry is too
   // coarse to carry the fine chop and fade them out before aliasing begins.
   float distanceToCamera = distance(cameraPosition, vWorldPosition);
-  float detailFade = 1.0 - smoothstep(15.0, 170.0, distanceToCamera);
+  float detailFade = 1.0 - smoothstep(10.0, 145.0, distanceToCamera);
   vec2 broadUv = vOceanPosition * 0.64 + vec2(uTime * 0.014, -uTime * 0.010);
   vec2 fineUv = vOceanPosition * 2.55 + vec2(-uTime * 0.033, uTime * 0.024);
   vec2 broadStep = vec2(0.009, 0.0);
@@ -124,7 +124,7 @@ void main() {
   vec3 reference = abs(normal.y) < 0.92 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
   vec3 tangent = normalize(cross(reference, normal));
   vec3 bitangent = normalize(cross(normal, tangent));
-  vec2 microSlope = vec2(broadDx * 0.72 + fineDx * 0.38, broadDz * 0.72 + fineDz * 0.38);
+  vec2 microSlope = vec2(broadDx * 0.38 + fineDx * 0.18, broadDz * 0.38 + fineDz * 0.18);
   normal = normalize(normal + (tangent * microSlope.x + bitangent * microSlope.y) * detailFade);
 
   // Fresnel-Schlick for the air/water interface. F0 is derived from the
@@ -136,13 +136,13 @@ void main() {
 
   // Use the wave height as a depth proxy for a finite water column: troughs
   // read denser and bluer while crests receive more transmitted sky color.
-  float shallowFactor = smoothstep(-0.78, 0.38, vWaveHeight);
-  float waterDepth = mix(1.85, 0.58, shallowFactor);
-  vec3 shallowColor = vec3(0.018, 0.19, 0.27);
-  vec3 deepColor = vec3(0.006, 0.048, 0.095);
+  float shallowFactor = smoothstep(-0.58, 0.46, vWaveHeight);
+  float waterDepth = mix(2.4, 0.54, shallowFactor);
+  vec3 shallowColor = vec3(0.008, 0.105, 0.18);
+  vec3 deepColor = vec3(0.0015, 0.018, 0.045);
   vec3 bodyColor = mix(deepColor, shallowColor, shallowFactor);
-  vec3 absorption = exp(-vec3(0.31, 0.86, 1.42) * waterDepth);
-  vec3 transmittedWater = bodyColor * (0.62 + absorption * 0.78);
+  vec3 absorption = exp(-vec3(0.26, 0.95, 1.80) * waterDepth);
+  vec3 transmittedWater = bodyColor * (0.52 + absorption * 0.68);
   vec3 waterColor = mix(transmittedWater, reflectedSky, fresnel);
 
   // Breakup follows compressed/curved crests, not height alone. The map
@@ -156,18 +156,33 @@ void main() {
     foamUv * 1.71 - vec2(uTime * 0.003, uTime * 0.004)
   ).rgb;
   float breakup = mix(dot(breakupA, vec3(0.3333333)), dot(breakupB, vec3(0.3333333)), 0.42);
-  breakup = smoothstep(0.52, 0.84, breakup);
-  float foam = clamp(vFoam * (0.10 + breakup * 0.76) + vCompression * 0.12, 0.0, 1.0);
-  vec3 foamColor = mix(vec3(0.23, 0.54, 0.62), vec3(0.82, 0.94, 0.92), breakup);
-  waterColor = mix(waterColor, foamColor, foam * 0.54);
+  breakup = smoothstep(0.62, 0.88, breakup);
+  float crestMask = max(
+    smoothstep(0.10, 0.42, vCompression),
+    smoothstep(0.18, 0.68, max(vCurvature, 0.0)) * 0.72
+  );
+  float foam = clamp(
+    vFoam * (0.025 + breakup * 0.52) * (0.26 + crestMask * 0.74)
+      + vCompression * 0.045,
+    0.0,
+    1.0
+  );
+  vec3 foamColor = mix(vec3(0.16, 0.37, 0.42), vec3(0.72, 0.85, 0.81), breakup);
+  waterColor = mix(waterColor, foamColor, foam * 0.52);
 
   // A restrained, broad-plus-tight sun glint keeps the highlight tied to the
   // same physical half-vector without turning the whole ocean metallic.
   vec3 halfVector = normalize(viewDirection + sunDirection);
   float facetAlignment = max(dot(normal, halfVector), 0.0);
-  float broadGlint = pow(facetAlignment, 42.0) * 0.026;
-  float tightGlint = pow(facetAlignment, 180.0) * 0.16;
-  waterColor += vec3(1.0, 0.70, 0.34) * (broadGlint + tightGlint);
+  vec2 sparkleUv = vOceanPosition * vec2(0.032, 0.047)
+    + vec2(uTime * 0.006, -uTime * 0.004);
+  float sparkleNoise = foamLuma(sparkleUv);
+  float sparkleMask = smoothstep(0.58, 0.84, sparkleNoise);
+  float sunFacet = smoothstep(0.16, 0.72, max(dot(normal, sunDirection), 0.0));
+  float brokenSunPath = mix(0.14, 1.0, sparkleMask) * mix(0.45, 1.0, sunFacet);
+  float broadGlint = pow(facetAlignment, 74.0) * 0.012;
+  float tightGlint = pow(facetAlignment, 190.0) * 0.08;
+  waterColor += vec3(1.0, 0.70, 0.34) * (broadGlint + tightGlint) * brokenSunPath;
 
   gl_FragColor = vec4(max(waterColor, 0.0), 1.0);
   #include <tonemapping_fragment>
