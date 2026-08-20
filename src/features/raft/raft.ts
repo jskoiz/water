@@ -815,13 +815,24 @@ class RaftController {
     );
 
     const heaveTarget = averageHeight + HEAVE_EQUILIBRIUM_OFFSET;
-    const targetRate = this.surfaceTargetInitialized
-      ? Math.abs(heaveTarget - this.previousHeaveTarget) / Math.max(deltaSeconds, 1 / 240)
-      : 0;
     if (!this.surfaceTargetInitialized) {
+      this.positionY = heaveTarget;
+      this.pitch = targetPitch;
+      this.roll = targetRoll;
+      this.heaveVelocity = 0;
+      this.pitchVelocity = 0;
+      this.rollVelocity = 0;
       this.previousHeaveTarget = heaveTarget;
       this.surfaceTargetInitialized = true;
+      this.wakeImpact = 0;
+      this.validateMotionState();
+      this.raftGroup.position.set(this.positionX, this.positionY, this.positionZ);
+      this.raftGroup.rotation.set(this.pitch, this.heading, this.roll);
+      return;
     }
+
+    const targetRate = Math.abs(heaveTarget - this.previousHeaveTarget)
+      / Math.max(deltaSeconds, 1 / 240);
 
     const heaveDamping = HEAVE_DAMPING_RATIO
       + Math.min(Math.abs(this.heaveVelocity) * HEAVE_QUADRATIC_DAMPING, 0.3);
