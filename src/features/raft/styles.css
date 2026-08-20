@@ -1,0 +1,213 @@
+.raft-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: hidden;
+  pointer-events: none;
+  color: rgba(255, 255, 255, 0.92);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: clamp(0.62rem, 0.56rem + 0.16vw, 0.82rem);
+  font-weight: 450;
+  letter-spacing: 0.2em;
+  line-height: 1;
+  text-shadow: 0 0 0.8rem rgba(0, 22, 35, 0.52);
+  text-transform: uppercase;
+  user-select: none;
+}
+
+.raft-hud__brand,
+.raft-hud__wind,
+.raft-hud__compass,
+.raft-hud__controls,
+.raft-hud__speed,
+.raft-hud__sail {
+  position: absolute;
+}
+
+.raft-hud__brand {
+  top: clamp(1.25rem, 4.2vh, 3.4rem);
+  left: clamp(1.25rem, 3.2vw, 3.8rem);
+  font-size: clamp(0.78rem, 0.7rem + 0.16vw, 1.05rem);
+  letter-spacing: 0.34em;
+}
+
+.raft-hud__compass {
+  top: clamp(1.25rem, 3.1vh, 2.5rem);
+  left: 50%;
+  width: min(34vw, 31rem);
+  min-width: 15rem;
+  height: 2.9rem;
+  transform: translateX(-50%);
+}
+
+.raft-hud__compass-line {
+  position: absolute;
+  top: 0.2rem;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.raft-hud__compass-line::before,
+.raft-hud__compass-line::after {
+  position: absolute;
+  top: -0.2rem;
+  width: 1px;
+  height: 0.62rem;
+  background: rgba(255, 255, 255, 0.64);
+  content: '';
+}
+
+.raft-hud__compass-line::before {
+  left: 33.333%;
+}
+
+.raft-hud__compass-line::after {
+  left: 66.666%;
+}
+
+.raft-hud__compass-marker {
+  position: absolute;
+  top: 1.2rem;
+  transform: translateX(-50%);
+  font-size: 0.82em;
+  letter-spacing: 0.16em;
+}
+
+.raft-hud__compass-marker:nth-of-type(2) {
+  left: 33.333%;
+}
+
+.raft-hud__compass-marker:nth-of-type(3) {
+  left: 50%;
+}
+
+.raft-hud__compass-marker:nth-of-type(4) {
+  left: 66.666%;
+}
+
+.raft-hud__wind {
+  top: clamp(1.35rem, 4.1vh, 3.35rem);
+  right: clamp(1.25rem, 3.2vw, 3.8rem);
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  letter-spacing: 0.16em;
+}
+
+.raft-hud__wind-arrow {
+  display: inline-block;
+  font-size: 1.9rem;
+  line-height: 0.6;
+  transform: translateY(-0.08rem);
+}
+
+.raft-hud__controls {
+  bottom: clamp(1.4rem, 5.4vh, 4.4rem);
+  left: clamp(1.25rem, 3.2vw, 3.8rem);
+  display: grid;
+  gap: 0.72rem;
+  letter-spacing: 0.14em;
+}
+
+.raft-hud__control-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 1.4rem;
+}
+
+.raft-hud__keys {
+  display: inline-flex;
+  gap: 0.16rem;
+}
+
+.raft-hud__key {
+  display: inline-grid;
+  width: 1.35rem;
+  height: 1.35rem;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  font: inherit;
+  font-size: 0.7em;
+  letter-spacing: 0;
+}
+
+.raft-hud__control-label {
+  font-size: 0.78em;
+  letter-spacing: 0.18em;
+}
+
+.raft-hud__speed {
+  bottom: clamp(1.35rem, 4.6vh, 3.4rem);
+  left: 50%;
+  font-size: clamp(1.05rem, 0.92rem + 0.32vw, 1.52rem);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.26em;
+  transform: translateX(-50%);
+}
+
+.raft-hud__sail {
+  right: clamp(1.25rem, 3.2vw, 3.8rem);
+  bottom: clamp(1.15rem, 4.2vh, 3.2rem);
+  display: grid;
+  justify-items: center;
+  gap: 0.72rem;
+  letter-spacing: 0.16em;
+}
+
+.raft-hud__sail-label,
+.raft-hud__sail-percent {
+  font-size: 0.78em;
+}
+
+.raft-hud__sail-gauge {
+  position: relative;
+  width: 1.05rem;
+  height: clamp(7.6rem, 18vh, 12.5rem);
+  border: 1px solid rgba(255, 255, 255, 0.76);
+}
+
+.raft-hud__sail-fill {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 0%;
+  background: rgba(255, 255, 255, 0.92);
+  transition: height 120ms linear;
+}
+
+@media (max-width: 700px) {
+  .raft-hud__compass {
+    width: 30vw;
+    min-width: 10rem;
+  }
+
+  .raft-hud__wind-label {
+    display: none;
+  }
+
+  .raft-hud__wind {
+    gap: 0;
+  }
+
+  .raft-hud__controls {
+    bottom: 1.2rem;
+  }
+
+  .raft-hud__sail {
+    bottom: 1.1rem;
+  }
+
+  .raft-hud__sail-gauge {
+    height: 7rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .raft-hud__sail-fill {
+    transition: none;
+  }
+}
