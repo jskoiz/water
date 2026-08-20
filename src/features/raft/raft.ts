@@ -482,22 +482,30 @@ class RaftController {
 
   private buildWake(): void {
     const wakeUniforms = {
-      uColor: { value: new THREE.Color(0xeafaff) },
-      uOpacity: { value: 0.72 },
+      uColor: { value: new THREE.Color(0x6fc4c9) },
+      uOpacity: { value: 0.64 },
       uTime: { value: 0 },
       uStrength: { value: 0 },
     };
     const wakeMaterial = this.registerMaterial(new THREE.ShaderMaterial({
-      uniforms: wakeUniforms,
+      uniforms: {
+        ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
+        ...wakeUniforms,
+      },
+      toneMapped: true,
       vertexShader: /* glsl */ `
         attribute float aAlpha;
         varying float vAlpha;
         varying vec3 vLocalPosition;
 
+        #include <fog_pars_vertex>
+
         void main() {
           vAlpha = aAlpha;
           vLocalPosition = position;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+          #include <fog_vertex>
         }
       `,
       fragmentShader: /* glsl */ `
@@ -508,13 +516,74 @@ class RaftController {
         varying float vAlpha;
         varying vec3 vLocalPosition;
 
+        #include <common>
+        #include <fog_pars_fragment>
+        #include <tonemapping_pars_fragment>
+        #include <colorspace_pars_fragment>
+
+        float hash12(vec2 point) {
+          point = fract(point * vec2(123.34, 456.21));
+          point += dot(point, point + 45.32);
+          return fract(point.x * point.y);
+        }
+
+        float noise2(vec2 point) {
+          vec2 cell = floor(point);
+          vec2 local = fract(point);
+          local = local * local * (3.0 - 2.0 * local);
+          float a = hash12(cell);
+          float b = hash12(cell + vec2(1.0, 0.0));
+          float c = hash12(cell + vec2(0.0, 1.0));
+          float d = hash12(cell + vec2(1.0, 1.0));
+          return mix(mix(a, b, local.x), mix(c, d, local.x), local.y);
+        }
+
+        float foamNoise(vec2 point) {
+          float value = 0.0;
+          float amplitude = 0.58;
+          for (int octave = 0; octave < 3; octave += 1) {
+            value += noise2(point) * amplitude;
+            point = point * 2.07 + vec2(11.7, -8.4);
+            amplitude *= 0.5;
+          }
+          return value;
+        }
+
         void main() {
-          float ripple = 0.84 + 0.16 * sin(vLocalPosition.z * 3.1 - uTime * 1.6 + vLocalPosition.x * 2.7);
-          float strength = smoothstep(0.01, 0.16, uStrength);
-          gl_FragColor = vec4(uColor, vAlpha * uOpacity * ripple * strength);
+          float distanceFade = 1.0 - smoothstep(3.45, 6.25, vLocalPosition.z);
+          float turbulence = foamNoise(vec2(
+            vLocalPosition.x * 9.4 + uTime * 0.10,
+            vLocalPosition.z * 1.72 - uTime * 0.34
+          ));
+          float lace = smoothstep(0.27, 0.72, turbulence);
+          float edgeBreakup = mix(0.32, 1.0, lace);
+          float narrowStreak = 0.80 + 0.20 * sin(
+            vLocalPosition.z * 6.4 - uTime * 1.8 + vLocalPosition.x * 9.0
+          );
+          float strength = smoothstep(0.04, 0.25, uStrength);
+          float foamAlpha = vAlpha * distanceFade * edgeBreakup * narrowStreak
+            * uOpacity * strength;
+          float dither = hash12(vec2(
+            floor(vLocalPosition.z * 7.0 + uTime * 0.8),
+            floor(vLocalPosition.x * 18.0)
+          ));
+          if (foamAlpha < 0.028 || (vAlpha < 0.22 && dither > edgeBreakup * 0.98)) {
+            discard;
+          }
+
+          vec3 foamColor = mix(
+            uColor,
+            vec3(0.62, 0.84, 0.84),
+            smoothstep(0.38, 0.88, turbulence) * 0.72
+          );
+          gl_FragColor = vec4(foamColor, foamAlpha);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+          #include <fog_fragment>
         }
       `,
       transparent: true,
+      fog: true,
       depthWrite: false,
       depthTest: true,
       side: THREE.DoubleSide,
@@ -527,13 +596,17 @@ class RaftController {
       uStrength: wakeUniforms.uStrength,
     };
     const wakeSections: readonly WakeSection[] = [
-      { x: 0.56, z: 1.76, width: 0.24, alpha: 0.84 },
-      { x: 0.65, z: 2.08, width: 0.42, alpha: 0.7 },
-      { x: 0.82, z: 2.58, width: 0.62, alpha: 0.54 },
-      { x: 1.02, z: 3.24, width: 0.86, alpha: 0.38 },
-      { x: 1.22, z: 4.04, width: 1.06, alpha: 0.24 },
-      { x: 1.38, z: 4.96, width: 1.22, alpha: 0.12 },
-      { x: 1.46, z: 5.92, width: 1.34, alpha: 0 },
+      { x: 0.52, z: 1.76, width: 0.24, alpha: 0.78 },
+      { x: 0.57, z: 1.98, width: 0.25, alpha: 0.72 },
+      { x: 0.64, z: 2.23, width: 0.27, alpha: 0.64 },
+      { x: 0.73, z: 2.53, width: 0.29, alpha: 0.55 },
+      { x: 0.84, z: 2.88, width: 0.31, alpha: 0.46 },
+      { x: 0.96, z: 3.28, width: 0.34, alpha: 0.38 },
+      { x: 1.08, z: 3.74, width: 0.37, alpha: 0.3 },
+      { x: 1.2, z: 4.25, width: 0.4, alpha: 0.22 },
+      { x: 1.31, z: 4.82, width: 0.42, alpha: 0.15 },
+      { x: 1.39, z: 5.44, width: 0.4, alpha: 0.08 },
+      { x: 1.45, z: 6.08, width: 0.34, alpha: 0 },
     ];
     for (const side of [-1, 1]) {
       const wakeGeometry = this.createWakeRibbonGeometry(
@@ -549,16 +622,17 @@ class RaftController {
     }
 
     const sprayMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
-      color: 0xd9f8ff,
-      roughness: 0.18,
+      color: 0x8ec4c9,
+      roughness: 0.32,
       metalness: 0,
-      emissive: 0x315463,
-      emissiveIntensity: 0.12,
+      emissive: 0x173d43,
+      emissiveIntensity: 0.04,
       transparent: true,
-      opacity: 0.58,
+      opacity: 0.4,
+      alphaTest: 0.02,
       depthWrite: false,
     }));
-    const sprayGeometry = this.registerGeometry(new THREE.SphereGeometry(0.065, 7, 5));
+    const sprayGeometry = this.registerGeometry(new THREE.SphereGeometry(0.055, 10, 6));
     for (let index = 0; index < 24; index += 1) {
       const spread = (index % 8) / 7;
       const side = index % 2 === 0 ? -1 : 1;
@@ -588,13 +662,18 @@ class RaftController {
     const indices: number[] = [];
 
     for (const section of sections) {
-      const outerHalfWidth = section.width * 0.5;
-      const innerHalfWidth = section.width * 0.24;
+      const edgeNoise = 0.5 + 0.5 * Math.sin(section.z * 4.35 + section.x * 6.2);
+      const centerJitter = Math.sign(section.x || 1)
+        * (0.018 + edgeNoise * 0.04)
+        * Math.sin(section.z * 7.1 + section.x * 3.4);
+      const center = section.x + centerJitter;
+      const outerHalfWidth = section.width * (0.38 + edgeNoise * 0.12);
+      const innerHalfWidth = section.width * (0.15 + edgeNoise * 0.07);
       positions.push(
-        section.x - outerHalfWidth, 0, section.z,
-        section.x - innerHalfWidth, 0, section.z,
-        section.x + innerHalfWidth, 0, section.z,
-        section.x + outerHalfWidth, 0, section.z,
+        center - outerHalfWidth, 0, section.z,
+        center - innerHalfWidth, 0, section.z,
+        center + innerHalfWidth, 0, section.z,
+        center + outerHalfWidth, 0, section.z,
       );
       alphas.push(0, section.alpha, section.alpha, 0);
     }
@@ -867,9 +946,9 @@ class RaftController {
     );
     this.wakeGroup.visible = wakeStrength > 0.012;
     this.wakeGroup.scale.set(
-      0.78 + speedFactor * 0.32 + impactFactor * 0.08,
+      0.82 + speedFactor * 0.22 + impactFactor * 0.04,
       1,
-      0.75 + speedFactor * 0.35 + impactFactor * 0.48,
+      0.78 + speedFactor * 0.3 + impactFactor * 0.18,
     );
     if (this.wakeUniforms) {
       this.wakeUniforms.uTime.value = elapsedSeconds;
@@ -885,8 +964,8 @@ class RaftController {
         + impactFactor * 1.45
       ) + particle.phase * 0.14) % 1;
       const dissipation = 1 - travel;
-      const launchHeight = 0.18 + speedFactor * 0.25 + impactFactor * 0.72;
-      const launchDistance = 0.8 + speedFactor * 1.4 + impactFactor * 1.75;
+      const launchHeight = 0.14 + speedFactor * 0.2 + impactFactor * 0.56;
+      const launchDistance = 0.68 + speedFactor * 1.2 + impactFactor * 1.45;
       particle.mesh.position.x = particle.baseX
         + Math.sin(phase) * (0.08 + speedFactor * 0.04 + impactFactor * 0.1);
       particle.mesh.position.y = particle.baseY
@@ -896,12 +975,12 @@ class RaftController {
       // Elongated, dissipating droplets read as blown spray rather than static
       // spheres. A small impact boost produces a short burst on hard landings.
       const size = particle.size
-        * (0.3 + sprayStrength * 0.86)
+        * (0.24 + sprayStrength * 0.68)
         * (0.36 + dissipation * 0.64);
       particle.mesh.scale.set(
-        size * (0.66 + particle.spread * 0.16),
-        size * (1.1 + impactFactor * 0.58),
-        size * (0.48 + speedFactor * 0.32),
+        size * (0.58 + particle.spread * 0.14),
+        size * (0.92 + impactFactor * 0.48),
+        size * (0.44 + speedFactor * 0.28),
       );
     }
   }
