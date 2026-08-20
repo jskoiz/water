@@ -87,6 +87,67 @@ function isFiniteVector(vector: THREE.Vector3): boolean {
   return Number.isFinite(vector.x) && Number.isFinite(vector.y) && Number.isFinite(vector.z);
 }
 
+interface SailMeshData {
+  readonly positions: Float32Array;
+  readonly uvs: Float32Array;
+  readonly billowWeights: Float32Array;
+  readonly indices: number[];
+}
+
+function createSubdividedSailData(segments = 12): SailMeshData {
+  const tack = { x: 0, y: 1.25, z: -0.79, u: 1, v: 0 };
+  const head = { x: 0, y: 4.36, z: -0.79, u: 0.06, v: 0 };
+  const clew = { x: -2.02, y: 1.22, z: -0.79, u: 1, v: 1 };
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const billowWeights: number[] = [];
+  const indexOf = new Map<string, number>();
+  const keyFor = (i: number, j: number): string => `${i},${j}`;
+
+  for (let i = 0; i <= segments; i += 1) {
+    for (let j = 0; j <= segments - i; j += 1) {
+      const tackWeight = i / segments;
+      const headWeight = j / segments;
+      const clewWeight = (segments - i - j) / segments;
+      indexOf.set(keyFor(i, j), positions.length / 3);
+      positions.push(
+        tack.x * tackWeight + head.x * headWeight + clew.x * clewWeight,
+        tack.y * tackWeight + head.y * headWeight + clew.y * clewWeight,
+        tack.z * tackWeight + head.z * headWeight + clew.z * clewWeight,
+      );
+      uvs.push(
+        tack.u * tackWeight + head.u * headWeight + clew.u * clewWeight,
+        tack.v * tackWeight + head.v * headWeight + clew.v * clewWeight,
+      );
+      billowWeights.push(clewWeight * (0.55 + tackWeight * 0.45 + headWeight * 0.85));
+    }
+  }
+
+  const indices: number[] = [];
+  for (let i = 0; i < segments; i += 1) {
+    for (let j = 0; j < segments - i; j += 1) {
+      const a = indexOf.get(keyFor(i, j));
+      const b = indexOf.get(keyFor(i + 1, j));
+      const c = indexOf.get(keyFor(i, j + 1));
+      if (a === undefined || b === undefined || c === undefined) {
+        continue;
+      }
+      indices.push(a, b, c);
+      const d = indexOf.get(keyFor(i + 1, j + 1));
+      if (d !== undefined) {
+        indices.push(b, d, c);
+      }
+    }
+  }
+
+  return {
+    positions: new Float32Array(positions),
+    uvs: new Float32Array(uvs),
+    billowWeights: new Float32Array(billowWeights),
+    indices,
+  };
+}
+
 interface DerivedSurfaceMaps {
   readonly normalMap: THREE.DataTexture;
   readonly roughnessMap: THREE.DataTexture;
@@ -313,6 +374,7 @@ class RaftController {
   private hud: RaftHud | null = null;
   private sailGeometry: THREE.BufferGeometry | null = null;
   private sailBasePositions: Float32Array | null = null;
+  private sailBillowWeights: Float32Array | null = null;
   private woodTexture: THREE.Texture | null = null;
   private sailTexture: THREE.Texture | null = null;
   private readonly waterlineUniform = { value: 0 };
@@ -431,6 +493,7 @@ class RaftController {
     this.sprayParticles.length = 0;
     this.sailGeometry = null;
     this.sailBasePositions = null;
+    this.sailBillowWeights = null;
     this.woodTexture = null;
     this.sailTexture = null;
     this.wakeUniforms = null;
@@ -559,20 +622,19 @@ class RaftController {
     boom.receiveShadow = true;
     this.raftGroup.add(boom);
 
+    const sailMesh = createSubdividedSailData(12);
+    this.sailBasePositions = sailMesh.positions;
+    this.sailBillowWeights = sailMesh.billowWeights;
     this.sailGeometry = this.registerGeometry(new THREE.BufferGeometry());
-    this.sailBasePositions = new Float32Array([
-      0, 1.25, -0.79,
-      0, 4.36, -0.79,
-      -2.02, 1.22, -0.79,
-    ]);
     this.sailGeometry.setAttribute(
       'position',
-      new THREE.BufferAttribute(this.sailBasePositions.slice(), 3),
+      new THREE.BufferAttribute(sailMesh.positions.slice(), 3),
     );
     this.sailGeometry.setAttribute(
       'uv',
-      new THREE.BufferAttribute(new Float32Array([1, 0, 0.06, 0, 1, 1]), 2),
+      new THREE.BufferAttribute(sailMesh.uvs, 2),
     );
+    this.sailGeometry.setIndex(sailMesh.indices);
     this.sailGeometry.computeVertexNormals();
     const sail = new THREE.Mesh(this.sailGeometry, sailMaterial);
     sail.name = 'raft-canvas-sail';
@@ -1101,29 +1163,28 @@ class RaftController {
   private updateSail(): void {
     const geometry = this.sailGeometry;
     const basePositions = this.sailBasePositions;
-    if (!geometry || !basePositions) {
+    const billowWeights = this.sailBillowWeights;
+    if (!geometry || !basePositions || !billowWeights) {
       return;
     }
     const position = geometry.getAttribute('position');
-    const localX = this.apparentWindX * Math.cos(this.heading)
-      + this.apparentWindZ * Math.sin(this.heading);
     const localZ = this.apparentWindX * -Math.sin(this.heading)
       + this.apparentWindZ * Math.cos(this.heading);
-    const apparentLength = Math.hypot(localX, localZ);
-    const fill = apparentLength > 1e-4
-      ? 0.12 * (0.35 + this.sailPower) * Math.min(apparentLength / WIND_SPEED_MPS, 1)
-      : 0;
-    const dirX = apparentLength > 1e-4 ? localX / apparentLength : 0;
-    const dirZ = apparentLength > 1e-4 ? localZ / apparentLength : 0;
-    const weights = [0.1, 0.45, 1];
-    for (let index = 0; index < 3; index += 1) {
-      const weight = weights[index] * fill;
-      const baseIndex = index * 3;
-      position.setX(index, basePositions[baseIndex] + dirX * weight);
-      position.setY(index, basePositions[baseIndex + 1]);
-      position.setZ(index, basePositions[baseIndex + 2] + dirZ * weight);
+    const apparentLength = Math.hypot(this.apparentWindX, this.apparentWindZ);
+    // Sail local +Z is the canvas normal. Billow downwind: sign(A · sailN).
+    const offsetScale = 0.16 * this.sailPower * apparentLength * Math.sign(localZ);
+    for (let index = 0; index < position.count; index += 1) {
+      const weight = billowWeights[index] ?? 0;
+      const base = index * 3;
+      position.setXYZ(
+        index,
+        basePositions[base],
+        basePositions[base + 1],
+        basePositions[base + 2] + weight * offsetScale,
+      );
     }
     position.needsUpdate = true;
+    geometry.computeVertexNormals();
   }
 
   private updateWake(elapsedSeconds: number): void {
