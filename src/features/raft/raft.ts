@@ -594,7 +594,7 @@ class RaftController {
   }
 
   private updateCamera(context: RuntimeContext, deltaSeconds: number): void {
-    this.cameraOffset.set(0, 5.05 + this.cameraPitch * 2.65, 9.1);
+    this.cameraOffset.set(0, 6.0 + this.cameraPitch * 2.65, 12.5);
     this.cameraOffset.applyAxisAngle(WORLD_UP, this.heading + this.cameraYaw);
     this.desiredCameraPosition.copy(this.raftGroup.position).add(this.cameraOffset);
     // Keep the look point above the deck so the raised chase camera shows the
