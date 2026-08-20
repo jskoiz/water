@@ -511,24 +511,6 @@ export function createOceanFeature(): RuntimeFeature {
         oceanMesh.frustumCulled = false;
         root.add(oceanMesh);
         scene.add(root);
-        const surface = oceanMesh;
-        let renderingPrepass = false;
-        // Prepass lives on the scene, not the Gerstner mesh: hide, capture
-        // color+depth, unhide in finally, then the main list draws the
-        // 12-component displaced surface. Do not touch visible from the
-        // mesh's own onBeforeRender.
-        scene.onBeforeRender = (renderer, renderScene, camera) => {
-          if (renderingPrepass || !sceneTarget) {
-            return;
-          }
-          renderingPrepass = true;
-          try {
-            renderScenePrepass(renderer, renderScene, camera, surface, sceneTarget);
-          } finally {
-            renderingPrepass = false;
-            surface.visible = true;
-          }
-        };
 
         scene.background = new THREE.Color(0x315c6b);
         scene.fog = new THREE.FogExp2(0x5b8793, 0.0031);
@@ -577,7 +559,6 @@ export function createOceanFeature(): RuntimeFeature {
       if (!oceanUniforms || !sky || !oceanMesh || !scene || !sceneTarget) {
         return;
       }
-      oceanMesh.visible = true;
       oceanUniforms.uTime.value = context.frame.elapsedSeconds;
       oceanUniforms.uCameraNear.value = context.camera.near;
       oceanUniforms.uCameraFar.value = context.camera.far;
@@ -588,6 +569,16 @@ export function createOceanFeature(): RuntimeFeature {
       // Keep the dome centered on the viewer without taking ownership of the
       // camera or changing any camera transform.
       sky.position.copy(context.camera.position);
+      // WaterThreeJS: hide Gerstner only for this standalone color+depth
+      // render. The runtime's later scene render then draws the 12-component
+      // mesh. Nesting that hide inside onBeforeRender was the flat-blue fail.
+      renderScenePrepass(
+        context.renderer,
+        scene,
+        context.camera,
+        oceanMesh,
+        sceneTarget,
+      );
     },
 
     resize(context): void {
