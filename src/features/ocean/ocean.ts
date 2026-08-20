@@ -97,6 +97,32 @@ float foamLuma(vec2 uv) {
   return dot(texture2D(uFoamMap, uv).rgb, vec3(0.3333333));
 }
 
+// Baked OCE-005 island ellipses. q²=(x-c)²/rx²+(z-c)²/rz² with rx≈11.2s,
+// rz≈5.0s. Peak 1.4 m puts the waterline on the ellipse; outside the
+// paraboloid goes negative so max() keeps the deep floor foam-free.
+float islandMound(vec2 xz, vec2 center, float rx, float rz, float peak) {
+  vec2 delta = xz - center;
+  float q2 = (delta.x * delta.x) / (rx * rx) + (delta.y * delta.y) / (rz * rz);
+  return peak * (1.0 - q2);
+}
+
+float circularMound(vec2 xz, vec2 center, float radius, float peak) {
+  vec2 delta = xz - center;
+  float q2 = dot(delta, delta) / (radius * radius);
+  return peak * (1.0 - q2);
+}
+
+float sampleBathymetry(vec2 xz) {
+  float bathymetry = -8.0;
+  bathymetry = max(bathymetry, islandMound(xz, vec2(-13.0, -205.0), 11.2 * 1.04, 5.0 * 1.04, 1.4));
+  bathymetry = max(bathymetry, islandMound(xz, vec2(-91.0, -154.0), 11.2 * 1.55, 5.0 * 1.55, 1.4));
+  bathymetry = max(bathymetry, islandMound(xz, vec2(57.0, -178.0), 11.2 * 1.06, 5.0 * 1.06, 1.4));
+  bathymetry = max(bathymetry, islandMound(xz, vec2(130.0, -145.0), 11.2 * 0.72, 5.0 * 0.72, 1.4));
+  bathymetry = max(bathymetry, islandMound(xz, vec2(-149.0, -190.0), 11.2 * 0.8, 5.0 * 0.8, 1.4));
+  bathymetry = max(bathymetry, circularMound(xz, vec2(-9.0, -200.0), 4.0, 1.0));
+  return bathymetry;
+}
+
 vec3 skyRadiance(vec3 direction) {
   vec3 skyDirection = normalize(direction);
   float horizon = smoothstep(-0.12, 0.52, skyDirection.y);
@@ -193,6 +219,11 @@ void main() {
     0.0,
     1.0
   );
+  // Water-column shore band (WaterThreeJS thickness test, baked ellipses).
+  float bathymetry = sampleBathymetry(vOceanPosition);
+  float waterColumn = vWaveHeight - bathymetry;
+  float shoreFoam = smoothstep(1.6, 0.08, waterColumn) * smoothstep(-0.35, 0.12, bathymetry);
+  foam = clamp(foam + shoreFoam, 0.0, 1.0);
 
   // Fresnel-Schlick for the air/water interface. F0 is derived from the
   // water IOR (roughly ((1.0 - 1.333) / (1.0 + 1.333))^2).
