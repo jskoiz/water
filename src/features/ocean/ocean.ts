@@ -76,6 +76,7 @@ uniform sampler2D uSceneColor;
 uniform sampler2D uSceneDepth;
 uniform float uCameraNear;
 uniform float uCameraFar;
+uniform mat4 uViewMatrix;
 uniform mat4 uProjMatrix;
 
 varying vec3 vWorldPosition;
@@ -116,12 +117,14 @@ float sceneEyeDepth(vec2 uv) {
 
 // WaterThreeJS SSR: march R through the pre-ocean color+depth target.
 vec4 marchSceneReflection(vec3 origin, vec3 direction) {
-  float stepLen = 2.2;
+  float stepSize = 0.25;
+  float dist = 0.0;
   float prevDiff = -1.0;
   vec2 prevUv = vec2(0.0);
   for (int i = 0; i < 32; i++) {
-    vec3 point = origin + direction * (stepLen * float(i + 1));
-    vec4 clip = uProjMatrix * viewMatrix * vec4(point, 1.0);
+    dist += stepSize;
+    vec3 point = origin + direction * dist;
+    vec4 clip = uProjMatrix * uViewMatrix * vec4(point, 1.0);
     if (clip.w <= 0.0) {
       break;
     }
@@ -130,7 +133,7 @@ vec4 marchSceneReflection(vec3 origin, vec3 direction) {
       break;
     }
     float sceneEye = sceneEyeDepth(uv);
-    float rayEye = -(viewMatrix * vec4(point, 1.0)).z;
+    float rayEye = -(uViewMatrix * vec4(point, 1.0)).z;
     float diff = rayEye - sceneEye;
     if (diff > 0.0 && diff < 6.0 && sceneEye < uCameraFar * 0.97) {
       float t = prevDiff < 0.0 ? 1.0 : (-prevDiff / (diff - prevDiff));
@@ -141,7 +144,7 @@ vec4 marchSceneReflection(vec3 origin, vec3 direction) {
     }
     prevDiff = diff;
     prevUv = uv;
-    stepLen *= 1.06;
+    stepSize *= 1.06;
   }
   return vec4(0.0);
 }
@@ -322,6 +325,7 @@ interface OceanUniforms {
   uSceneDepth: { value: THREE.Texture | null };
   uCameraNear: { value: number };
   uCameraFar: { value: number };
+  uViewMatrix: { value: THREE.Matrix4 };
   uProjMatrix: { value: THREE.Matrix4 };
   envMap: { value: THREE.Texture | null };
 }
@@ -374,14 +378,21 @@ function renderScenePrepass(
   camera: THREE.Camera,
   oceanMesh: THREE.Mesh,
   renderTarget: THREE.WebGLRenderTarget,
+  uniforms: OceanUniforms,
 ): void {
+  uniforms.uViewMatrix.value.copy(camera.matrixWorldInverse);
+  uniforms.uProjMatrix.value.copy(camera.projectionMatrix);
+  if (camera instanceof THREE.PerspectiveCamera) {
+    uniforms.uCameraNear.value = camera.near;
+    uniforms.uCameraFar.value = camera.far;
+  }
   const currentRenderTarget = renderer.getRenderTarget();
   const currentXrEnabled = renderer.xr.enabled;
   const currentShadowAutoUpdate = renderer.shadowMap.autoUpdate;
   const currentToneMapping = renderer.toneMapping;
   const currentOutputColorSpace = renderer.outputColorSpace;
-  // Hide Gerstner for the color+depth capture only. The main draw keeps the
-  // 12-component displaced mesh; leaving this false is the 06f935e fail.
+  // Hide Gerstner for the color+depth capture only. Shader compiles now, so
+  // the main list after unhide still draws the 12-component mesh.
   oceanMesh.visible = false;
   try {
     renderer.xr.enabled = false;
@@ -503,6 +514,7 @@ export function createOceanFeature(): RuntimeFeature {
           uSceneDepth: { value: sceneTarget.depthTexture },
           uCameraNear: { value: context.camera.near },
           uCameraFar: { value: context.camera.far },
+          uViewMatrix: { value: context.camera.matrixWorldInverse.clone() },
           uProjMatrix: { value: context.camera.projectionMatrix.clone() },
           envMap: { value: null },
         };
@@ -530,6 +542,27 @@ export function createOceanFeature(): RuntimeFeature {
         oceanMesh.frustumCulled = false;
         root.add(oceanMesh);
         scene.add(root);
+        const surface = oceanMesh;
+        let renderingPrepass = false;
+        scene.onBeforeRender = (renderer, renderScene, camera) => {
+          if (renderingPrepass || !oceanUniforms || !sceneTarget) {
+            return;
+          }
+          renderingPrepass = true;
+          try {
+            renderScenePrepass(
+              renderer,
+              renderScene,
+              camera,
+              surface,
+              sceneTarget,
+              oceanUniforms,
+            );
+          } finally {
+            renderingPrepass = false;
+            surface.visible = true;
+          }
+        };
 
         scene.background = new THREE.Color(0x315c6b);
         scene.fog = new THREE.FogExp2(0x5b8793, 0.0031);
@@ -579,25 +612,12 @@ export function createOceanFeature(): RuntimeFeature {
         return;
       }
       oceanUniforms.uTime.value = context.frame.elapsedSeconds;
-      oceanUniforms.uCameraNear.value = context.camera.near;
-      oceanUniforms.uCameraFar.value = context.camera.far;
-      oceanUniforms.uProjMatrix.value.copy(context.camera.projectionMatrix);
       if (oceanUniforms.uSunDirection.value.distanceToSquared(lastPmremSun) > 1e-8) {
         rebuildSkyPmrem(context.renderer, sky, oceanUniforms.uSunDirection.value);
       }
       // Keep the dome centered on the viewer without taking ownership of the
       // camera or changing any camera transform.
       sky.position.copy(context.camera.position);
-      // WaterThreeJS: hide Gerstner only for this standalone color+depth
-      // render. The runtime's later scene render then draws the 12-component
-      // mesh. Nesting that hide inside onBeforeRender was the flat-blue fail.
-      renderScenePrepass(
-        context.renderer,
-        scene,
-        context.camera,
-        oceanMesh,
-        sceneTarget,
-      );
     },
 
     resize(context): void {
