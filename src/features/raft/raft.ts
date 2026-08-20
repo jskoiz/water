@@ -19,6 +19,25 @@ const KNOTS_PER_METRE_PER_SECOND = 1.943844;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const MAX_PITCH = 0.45;
 const MAX_ROLL = 0.52;
+const CONTACT_HALF_WIDTH = 1.25;
+const CONTACT_HALF_LENGTH = 2.05;
+const HEAVE_EQUILIBRIUM_OFFSET = -0.12;
+const MAX_HEAVE_DEVIATION = 0.72;
+const MAX_HEAVE_VELOCITY = 3.2;
+const MAX_PITCH_VELOCITY = 1.8;
+const MAX_ROLL_VELOCITY = 1.9;
+const HEAVE_NATURAL_FREQUENCY = 2.2;
+const PITCH_NATURAL_FREQUENCY = 1.95;
+const ROLL_NATURAL_FREQUENCY = 1.8;
+const HEAVE_DAMPING_RATIO = 0.76;
+const PITCH_DAMPING_RATIO = 0.72;
+const ROLL_DAMPING_RATIO = 0.74;
+// The velocity-dependent terms approximate the quadratic viscous/radiation
+// damping used in reduced-order marine craft models while keeping the exact
+// spring step below stable at large frame deltas.
+const HEAVE_QUADRATIC_DAMPING = 0.075;
+const PITCH_QUADRATIC_DAMPING = 0.13;
+const ROLL_QUADRATIC_DAMPING = 0.14;
 
 interface SprayParticle {
   readonly mesh: THREE.Mesh;
@@ -37,6 +56,11 @@ interface WakeSection {
   readonly alpha: number;
 }
 
+interface SpringState {
+  readonly position: number;
+  readonly velocity: number;
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
@@ -47,6 +71,92 @@ function damp(current: number, target: number, sharpness: number, deltaSeconds: 
 
 function isFiniteVector(vector: THREE.Vector3): boolean {
   return Number.isFinite(vector.x) && Number.isFinite(vector.y) && Number.isFinite(vector.z);
+}
+
+/**
+ * Advance x'' + 2*zeta*omega*x' + omega^2*x = 0 exactly over one frame.
+ *
+ * The target is held constant for the frame, so this is a frame-rate
+ * independent second-order response rather than a lerp disguised as physics.
+ * The closed-form branches remain bounded for the 0.25s runtime delta cap and
+ * cover under-, critical-, and over-damped craft responses.
+ */
+function integrateDampedSpring(
+  position: number,
+  velocity: number,
+  target: number,
+  deltaSeconds: number,
+  naturalFrequency: number,
+  dampingRatio: number,
+): SpringState {
+  if (![position, velocity, target, deltaSeconds, naturalFrequency, dampingRatio].every(Number.isFinite)) {
+    throw new Error('Raft spring received a non-finite state.');
+  }
+  if (deltaSeconds <= 0) {
+    return { position, velocity };
+  }
+
+  const omega = Math.max(naturalFrequency, 0.001);
+  const zeta = Math.max(dampingRatio, 0);
+  const displacement = position - target;
+  const safeDelta = Math.min(deltaSeconds, 0.25);
+  let nextDisplacement: number;
+  let nextVelocity: number;
+
+  if (zeta < 1 - 1e-5) {
+    const dampedFrequency = omega * Math.sqrt(Math.max(1 - zeta * zeta, 0));
+    const angle = dampedFrequency * safeDelta;
+    const sine = Math.sin(angle);
+    const cosine = Math.cos(angle);
+    const decay = Math.exp(-zeta * omega * safeDelta);
+    const frequencyRatio = (zeta * omega) / dampedFrequency;
+    nextDisplacement = decay * (
+      displacement * (cosine + frequencyRatio * sine)
+      + velocity * (sine / dampedFrequency)
+    );
+    nextVelocity = decay * (
+      velocity * (cosine - frequencyRatio * sine)
+      - displacement * ((omega * omega / dampedFrequency) * sine)
+    );
+  } else if (zeta <= 1 + 1e-5) {
+    const decay = Math.exp(-omega * safeDelta);
+    const criticalVelocity = velocity + omega * displacement;
+    nextDisplacement = decay * (displacement + criticalVelocity * safeDelta);
+    nextVelocity = decay * (velocity - omega * criticalVelocity * safeDelta);
+  } else {
+    const root = Math.sqrt(zeta * zeta - 1);
+    const firstRoot = -omega * (zeta - root);
+    const secondRoot = -omega * (zeta + root);
+    const secondCoefficient = (velocity - firstRoot * displacement) / (secondRoot - firstRoot);
+    const firstCoefficient = displacement - secondCoefficient;
+    const firstDecay = Math.exp(firstRoot * safeDelta);
+    const secondDecay = Math.exp(secondRoot * safeDelta);
+    nextDisplacement = firstCoefficient * firstDecay + secondCoefficient * secondDecay;
+    nextVelocity = firstCoefficient * firstRoot * firstDecay
+      + secondCoefficient * secondRoot * secondDecay;
+  }
+
+  const nextPosition = target + nextDisplacement;
+  if (![nextPosition, nextVelocity].every(Number.isFinite)) {
+    throw new Error('Raft spring produced a non-finite state.');
+  }
+  return { position: nextPosition, velocity: nextVelocity };
+}
+
+function boundSpringState(
+  state: SpringState,
+  minimum: number,
+  maximum: number,
+  maximumVelocity: number,
+): SpringState {
+  const boundedPosition = clamp(state.position, minimum, maximum);
+  const boundedVelocity = clamp(state.velocity, -maximumVelocity, maximumVelocity);
+  return {
+    position: boundedPosition,
+    // A hard attitude/heave clamp represents the hull leaving the linearized
+    // regime. Bleeding most of the rate avoids an artificial rebound impulse.
+    velocity: boundedPosition === state.position ? boundedVelocity : boundedVelocity * 0.18,
+  };
 }
 
 function loadTexture(loader: THREE.TextureLoader, url: string): Promise<THREE.Texture> {
@@ -64,10 +174,18 @@ class RaftController {
   private readonly raftGroup = new THREE.Group();
   private readonly wakeGroup = new THREE.Group();
   private readonly sampleOffsets = [
-    new THREE.Vector3(-1.25, 0, -2.05),
-    new THREE.Vector3(1.25, 0, -2.05),
-    new THREE.Vector3(-1.25, 0, 2.05),
-    new THREE.Vector3(1.25, 0, 2.05),
+    // A symmetric 3x3 contact stencil gives the hull a centerline keel and
+    // midship contacts in addition to the four corners. It reacts to local
+    // wave differences without letting a single corner dominate attitude.
+    new THREE.Vector3(-CONTACT_HALF_WIDTH, 0, -CONTACT_HALF_LENGTH),
+    new THREE.Vector3(0, 0, -CONTACT_HALF_LENGTH),
+    new THREE.Vector3(CONTACT_HALF_WIDTH, 0, -CONTACT_HALF_LENGTH),
+    new THREE.Vector3(-CONTACT_HALF_WIDTH, 0, 0),
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(CONTACT_HALF_WIDTH, 0, 0),
+    new THREE.Vector3(-CONTACT_HALF_WIDTH, 0, CONTACT_HALF_LENGTH),
+    new THREE.Vector3(0, 0, CONTACT_HALF_LENGTH),
+    new THREE.Vector3(CONTACT_HALF_WIDTH, 0, CONTACT_HALF_LENGTH),
   ] as const;
   private readonly sampleWorldPosition = new THREE.Vector3();
   private readonly surfaceNormal = new THREE.Vector3(0, 1, 0);
@@ -75,7 +193,7 @@ class RaftController {
   private readonly cameraTarget = new THREE.Vector3();
   private readonly cameraOffset = new THREE.Vector3();
   private readonly targetOffset = new THREE.Vector3();
-  private readonly sampleHeights = [0, 0, 0, 0];
+  private readonly sampleHeights = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   private readonly sprayParticles: SprayParticle[] = [];
   private readonly geometries = new Set<THREE.BufferGeometry>();
   private readonly materials = new Set<THREE.Material>();
@@ -88,6 +206,10 @@ class RaftController {
   private sailBasePositions: Float32Array | null = null;
   private woodTexture: THREE.Texture | null = null;
   private sailTexture: THREE.Texture | null = null;
+  private wakeUniforms: {
+    readonly uTime: { value: number };
+    readonly uStrength: { value: number };
+  } | null = null;
   private lastPointerId: number | null = null;
   private lastPointerX = 0;
   private lastPointerY = 0;
@@ -100,6 +222,12 @@ class RaftController {
   private steering = 0;
   private pitch = 0;
   private roll = 0;
+  private heaveVelocity = 0;
+  private pitchVelocity = 0;
+  private rollVelocity = 0;
+  private previousHeaveTarget = 0;
+  private wakeImpact = 0;
+  private surfaceTargetInitialized = false;
   private cameraYaw = 0;
   private cameraPitch = 0.06;
   private initialized = false;
@@ -190,6 +318,13 @@ class RaftController {
     this.sailBasePositions = null;
     this.woodTexture = null;
     this.sailTexture = null;
+    this.wakeUniforms = null;
+    this.heaveVelocity = 0;
+    this.pitchVelocity = 0;
+    this.rollVelocity = 0;
+    this.previousHeaveTarget = 0;
+    this.wakeImpact = 0;
+    this.surfaceTargetInitialized = false;
     this.ocean = null;
     this.canvas = null;
     this.initialized = false;
@@ -212,38 +347,38 @@ class RaftController {
     this.wakeGroup.name = 'raft-wake';
 
     const woodMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
-      color: 0xb4885a,
+      color: 0xa9794f,
       map: this.woodTexture,
-      roughness: 0.84,
-      metalness: 0.02,
+      roughness: 0.76,
+      metalness: 0.01,
       emissive: 0x2c1a0d,
-      emissiveIntensity: 0.22,
+      emissiveIntensity: 0.08,
     }));
     const darkWoodMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
-      color: 0x765238,
+      color: 0x67442f,
       map: this.woodTexture,
-      roughness: 0.88,
+      roughness: 0.82,
       metalness: 0.01,
       emissive: 0x24150a,
-      emissiveIntensity: 0.24,
+      emissiveIntensity: 0.1,
     }));
     const ropeMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
       color: 0x765639,
-      roughness: 0.94,
+      roughness: 0.88,
       metalness: 0,
       emissive: 0x1b1008,
-      emissiveIntensity: 0.18,
+      emissiveIntensity: 0.06,
     }));
     const sailMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
-      color: 0xf0dfbd,
+      color: 0xe8d6b4,
       map: this.sailTexture,
-      roughness: 0.94,
+      roughness: 0.84,
       metalness: 0,
       side: THREE.DoubleSide,
       transparent: true,
       alphaTest: 0.04,
       emissive: 0x63482b,
-      emissiveIntensity: 0.28,
+      emissiveIntensity: 0.07,
     }));
 
     const plankGeometry = this.registerGeometry(new THREE.BoxGeometry(0.36, 0.32, 4.75, 1, 1, 8));
@@ -277,6 +412,7 @@ class RaftController {
     const mastCap = new THREE.Mesh(mastCapGeometry, darkWoodMaterial);
     mastCap.position.set(0, 4.5, -0.74);
     mastCap.castShadow = true;
+    mastCap.receiveShadow = true;
     this.raftGroup.add(mastCap);
 
     const boomGeometry = this.registerGeometry(new THREE.CylinderGeometry(0.075, 0.09, 2.15, 8));
@@ -284,6 +420,7 @@ class RaftController {
     boom.position.set(-0.92, 1.28, -0.77);
     boom.rotation.z = Math.PI / 2;
     boom.castShadow = true;
+    boom.receiveShadow = true;
     this.raftGroup.add(boom);
 
     this.sailGeometry = this.registerGeometry(new THREE.BufferGeometry());
@@ -344,27 +481,37 @@ class RaftController {
   }
 
   private buildWake(): void {
+    const wakeUniforms = {
+      uColor: { value: new THREE.Color(0xeafaff) },
+      uOpacity: { value: 0.72 },
+      uTime: { value: 0 },
+      uStrength: { value: 0 },
+    };
     const wakeMaterial = this.registerMaterial(new THREE.ShaderMaterial({
-      uniforms: {
-        uColor: { value: new THREE.Color(0xeafaff) },
-        uOpacity: { value: 0.72 },
-      },
+      uniforms: wakeUniforms,
       vertexShader: /* glsl */ `
         attribute float aAlpha;
         varying float vAlpha;
+        varying vec3 vLocalPosition;
 
         void main() {
           vAlpha = aAlpha;
+          vLocalPosition = position;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
       `,
       fragmentShader: /* glsl */ `
         uniform vec3 uColor;
         uniform float uOpacity;
+        uniform float uTime;
+        uniform float uStrength;
         varying float vAlpha;
+        varying vec3 vLocalPosition;
 
         void main() {
-          gl_FragColor = vec4(uColor, vAlpha * uOpacity);
+          float ripple = 0.84 + 0.16 * sin(vLocalPosition.z * 3.1 - uTime * 1.6 + vLocalPosition.x * 2.7);
+          float strength = smoothstep(0.01, 0.16, uStrength);
+          gl_FragColor = vec4(uColor, vAlpha * uOpacity * ripple * strength);
         }
       `,
       transparent: true,
@@ -375,6 +522,10 @@ class RaftController {
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
     }));
+    this.wakeUniforms = {
+      uTime: wakeUniforms.uTime,
+      uStrength: wakeUniforms.uStrength,
+    };
     const wakeSections: readonly WakeSection[] = [
       { x: 0.56, z: 1.76, width: 0.24, alpha: 0.84 },
       { x: 0.65, z: 2.08, width: 0.42, alpha: 0.7 },
@@ -397,13 +548,17 @@ class RaftController {
       this.wakeGroup.add(wake);
     }
 
-    const sprayMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
-      color: 0xf4fcff,
+    const sprayMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
+      color: 0xd9f8ff,
+      roughness: 0.18,
+      metalness: 0,
+      emissive: 0x315463,
+      emissiveIntensity: 0.12,
       transparent: true,
-      opacity: 0.64,
+      opacity: 0.58,
       depthWrite: false,
     }));
-    const sprayGeometry = this.registerGeometry(new THREE.SphereGeometry(0.065, 8, 5));
+    const sprayGeometry = this.registerGeometry(new THREE.SphereGeometry(0.065, 7, 5));
     for (let index = 0; index < 24; index += 1) {
       const spread = (index % 8) / 7;
       const side = index % 2 === 0 ? -1 : 1;
@@ -471,6 +626,7 @@ class RaftController {
     const geometry = this.registerGeometry(new THREE.TubeGeometry(curve, Math.max(points.length * 6, 12), radius, 6, false));
     const rope = new THREE.Mesh(geometry, material);
     rope.castShadow = true;
+    rope.receiveShadow = true;
     this.raftGroup.add(rope);
   }
 
@@ -538,29 +694,151 @@ class RaftController {
     }
     this.surfaceNormal.normalize();
 
-    const leftHeight = (this.sampleHeights[0] + this.sampleHeights[2]) * 0.5;
-    const rightHeight = (this.sampleHeights[1] + this.sampleHeights[3]) * 0.5;
-    const frontHeight = (this.sampleHeights[0] + this.sampleHeights[1]) * 0.5;
-    const backHeight = (this.sampleHeights[2] + this.sampleHeights[3]) * 0.5;
-    const averageHeight = this.sampleHeights.reduce((sum, height) => sum + height, 0) / 4;
+    const leftHeight = (
+      this.sampleHeights[0]
+      + this.sampleHeights[3]
+      + this.sampleHeights[6]
+    ) / 3;
+    const rightHeight = (
+      this.sampleHeights[2]
+      + this.sampleHeights[5]
+      + this.sampleHeights[8]
+    ) / 3;
+    const frontHeight = (
+      this.sampleHeights[0]
+      + this.sampleHeights[1]
+      + this.sampleHeights[2]
+    ) / 3;
+    const backHeight = (
+      this.sampleHeights[6]
+      + this.sampleHeights[7]
+      + this.sampleHeights[8]
+    ) / 3;
+    const averageHeight = this.sampleHeights.reduce((sum, height) => sum + height, 0)
+      / this.sampleHeights.length;
     const normalRoll = Math.atan2(this.surfaceNormal.x, this.surfaceNormal.y);
     const normalPitch = Math.atan2(this.surfaceNormal.z, this.surfaceNormal.y);
+    const contactRoll = -Math.atan2(
+      rightHeight - leftHeight,
+      CONTACT_HALF_WIDTH * 2,
+    );
+    const contactPitch = Math.atan2(
+      frontHeight - backHeight,
+      CONTACT_HALF_LENGTH * 2,
+    );
     const targetRoll = clamp(
-      -Math.atan2(rightHeight - leftHeight, 2.5) + normalRoll * 0.32,
+      contactRoll * 0.82 + normalRoll * 0.18,
       -MAX_ROLL,
       MAX_ROLL,
     );
     const targetPitch = clamp(
-      Math.atan2(frontHeight - backHeight, 4.1) + normalPitch * 0.32,
+      contactPitch * 0.82 + normalPitch * 0.18,
       -MAX_PITCH,
       MAX_PITCH,
     );
 
-    this.positionY = damp(this.positionY, averageHeight - 0.12, 8.5, deltaSeconds);
-    this.roll = damp(this.roll, targetRoll, 5.5, deltaSeconds);
-    this.pitch = damp(this.pitch, targetPitch, 5.5, deltaSeconds);
+    const heaveTarget = averageHeight + HEAVE_EQUILIBRIUM_OFFSET;
+    const targetRate = this.surfaceTargetInitialized
+      ? Math.abs(heaveTarget - this.previousHeaveTarget) / Math.max(deltaSeconds, 1 / 240)
+      : 0;
+    if (!this.surfaceTargetInitialized) {
+      this.previousHeaveTarget = heaveTarget;
+      this.surfaceTargetInitialized = true;
+    }
+
+    const heaveDamping = HEAVE_DAMPING_RATIO
+      + Math.min(Math.abs(this.heaveVelocity) * HEAVE_QUADRATIC_DAMPING, 0.3);
+    const rollDamping = ROLL_DAMPING_RATIO
+      + Math.min(Math.abs(this.rollVelocity) * ROLL_QUADRATIC_DAMPING, 0.3);
+    const pitchDamping = PITCH_DAMPING_RATIO
+      + Math.min(Math.abs(this.pitchVelocity) * PITCH_QUADRATIC_DAMPING, 0.3);
+    const heaveState = boundSpringState(
+      integrateDampedSpring(
+        this.positionY,
+        this.heaveVelocity,
+        heaveTarget,
+        deltaSeconds,
+        HEAVE_NATURAL_FREQUENCY,
+        heaveDamping,
+      ),
+      heaveTarget - MAX_HEAVE_DEVIATION,
+      heaveTarget + MAX_HEAVE_DEVIATION,
+      MAX_HEAVE_VELOCITY,
+    );
+    const rollState = boundSpringState(
+      integrateDampedSpring(
+        this.roll,
+        this.rollVelocity,
+        targetRoll,
+        deltaSeconds,
+        ROLL_NATURAL_FREQUENCY,
+        rollDamping,
+      ),
+      -MAX_ROLL,
+      MAX_ROLL,
+      MAX_ROLL_VELOCITY,
+    );
+    const pitchState = boundSpringState(
+      integrateDampedSpring(
+        this.pitch,
+        this.pitchVelocity,
+        targetPitch,
+        deltaSeconds,
+        PITCH_NATURAL_FREQUENCY,
+        pitchDamping,
+      ),
+      -MAX_PITCH,
+      MAX_PITCH,
+      MAX_PITCH_VELOCITY,
+    );
+    this.positionY = heaveState.position;
+    this.heaveVelocity = heaveState.velocity;
+    this.roll = rollState.position;
+    this.rollVelocity = rollState.velocity;
+    this.pitch = pitchState.position;
+    this.pitchVelocity = pitchState.velocity;
+    this.previousHeaveTarget = heaveTarget;
+
+    const impactSignal = clamp(
+      targetRate * 0.2
+      + Math.abs(this.heaveVelocity) * 0.12
+      + Math.hypot(this.rollVelocity, this.pitchVelocity) * 0.06,
+      0,
+      1,
+    );
+    this.wakeImpact = Math.max(
+      this.wakeImpact * Math.exp(-8.5 * deltaSeconds),
+      impactSignal,
+    );
+    this.validateMotionState();
     this.raftGroup.position.set(this.positionX, this.positionY, this.positionZ);
     this.raftGroup.rotation.set(this.pitch, this.heading, this.roll);
+  }
+
+  private validateMotionState(): void {
+    const motionState = [
+      this.positionX,
+      this.positionY,
+      this.positionZ,
+      this.heading,
+      this.speedMetersPerSecond,
+      this.pitch,
+      this.roll,
+      this.heaveVelocity,
+      this.pitchVelocity,
+      this.rollVelocity,
+      this.wakeImpact,
+    ];
+    if (!motionState.every(Number.isFinite)) {
+      throw new Error('Raft motion state became non-finite.');
+    }
+    if (
+      Math.abs(this.positionY - this.previousHeaveTarget) > MAX_HEAVE_DEVIATION + 1e-6
+      || Math.abs(this.pitch) > MAX_PITCH + 1e-6
+      || Math.abs(this.roll) > MAX_ROLL + 1e-6
+    ) {
+      throw new Error('Raft motion state exceeded its physical bounds.');
+    }
   }
 
   private updateSail(elapsedSeconds: number): void {
@@ -579,17 +857,52 @@ class RaftController {
 
   private updateWake(elapsedSeconds: number): void {
     const speedFactor = clamp(this.speedMetersPerSecond / 3.35, 0, 1);
-    this.wakeGroup.visible = speedFactor > 0.01;
-    this.wakeGroup.scale.set(0.78 + speedFactor * 0.32, 1, 0.75 + speedFactor * 0.35);
+    const impactFactor = clamp(this.wakeImpact, 0, 1);
+    const wakeStrength = clamp(
+      speedFactor * 0.76
+      + speedFactor * impactFactor * 0.24
+      + impactFactor * 0.28,
+      0,
+      1,
+    );
+    this.wakeGroup.visible = wakeStrength > 0.012;
+    this.wakeGroup.scale.set(
+      0.78 + speedFactor * 0.32 + impactFactor * 0.08,
+      1,
+      0.75 + speedFactor * 0.35 + impactFactor * 0.48,
+    );
+    if (this.wakeUniforms) {
+      this.wakeUniforms.uTime.value = elapsedSeconds;
+      this.wakeUniforms.uStrength.value = wakeStrength;
+    }
+
+    const sprayStrength = clamp(speedFactor * 0.7 + impactFactor * 0.95, 0, 1);
     for (const particle of this.sprayParticles) {
-      const phase = elapsedSeconds * (1.8 + particle.spread) + particle.phase;
-      const travel = (elapsedSeconds * (0.45 + speedFactor * 0.9) + particle.phase * 0.14) % 1;
-      particle.mesh.position.x = particle.baseX + Math.sin(phase) * 0.12 * speedFactor;
-      particle.mesh.position.y = particle.baseY + Math.abs(Math.sin(phase * 0.8)) * (0.18 + speedFactor * 0.25);
-      particle.mesh.position.z = particle.baseZ + travel * (0.8 + speedFactor * 1.4);
-      particle.mesh.visible = speedFactor > 0.03;
-      const size = particle.size * (0.5 + speedFactor * 0.72);
-      particle.mesh.scale.set(size * 0.82, size * 1.18, size * 0.82);
+      const phase = elapsedSeconds * (1.8 + particle.spread + speedFactor * 0.75) + particle.phase;
+      const travel = (elapsedSeconds * (
+        0.45
+        + speedFactor * 0.9
+        + impactFactor * 1.45
+      ) + particle.phase * 0.14) % 1;
+      const dissipation = 1 - travel;
+      const launchHeight = 0.18 + speedFactor * 0.25 + impactFactor * 0.72;
+      const launchDistance = 0.8 + speedFactor * 1.4 + impactFactor * 1.75;
+      particle.mesh.position.x = particle.baseX
+        + Math.sin(phase) * (0.08 + speedFactor * 0.04 + impactFactor * 0.1);
+      particle.mesh.position.y = particle.baseY
+        + Math.abs(Math.sin(phase * 0.8)) * launchHeight * (0.35 + particle.spread * 0.65);
+      particle.mesh.position.z = particle.baseZ + travel * launchDistance;
+      particle.mesh.visible = sprayStrength > 0.035 && dissipation > 0.025;
+      // Elongated, dissipating droplets read as blown spray rather than static
+      // spheres. A small impact boost produces a short burst on hard landings.
+      const size = particle.size
+        * (0.3 + sprayStrength * 0.86)
+        * (0.36 + dissipation * 0.64);
+      particle.mesh.scale.set(
+        size * (0.66 + particle.spread * 0.16),
+        size * (1.1 + impactFactor * 0.58),
+        size * (0.48 + speedFactor * 0.32),
+      );
     }
   }
 
