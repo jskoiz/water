@@ -22,14 +22,15 @@ const OCEAN_SEGMENTS = 240;
 const FOAM_TEXTURE_PATH = '/ocean/foam-breakup.png';
 const OCEAN_WAVE_SHADER_SOURCE = createOceanWaveShaderSource();
 const REFLECT_CLIP_BIAS = 0.003;
-const REFLECT_MAX_EDGE = 512;
-const REFLECT_MIN_EDGE = 256;
+const REFLECT_DISTORTION = 0.08;
+const REFLECT_DESKTOP_EDGE = 1024;
+const REFLECT_MOBILE_EDGE = 512;
 
 const OCEAN_VERTEX_SHADER = /* glsl */ `
 ${OCEAN_WAVE_SHADER_SOURCE}
 
 uniform float uTime;
-uniform mat4 uReflectMatrix;
+uniform mat4 uReflectionMatrix;
 
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
@@ -66,7 +67,7 @@ void main() {
   vWaveHeight = wave.height;
   vWorldNormal = normalize(mat3(modelMatrix) * localNormal);
   vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
-  vReflectCoord = uReflectMatrix * vec4(vWorldPosition, 1.0);
+  vReflectCoord = uReflectionMatrix * vec4(vWorldPosition, 1.0);
 
   vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
   gl_Position = projectionMatrix * mvPosition;
@@ -79,7 +80,8 @@ const OCEAN_FRAGMENT_SHADER = /* glsl */ `
 uniform float uTime;
 uniform vec3 uSunDirection;
 uniform sampler2D uFoamMap;
-uniform sampler2D uReflectMap;
+uniform sampler2D tReflection;
+uniform float uReflectionDistortion;
 uniform sampler2D envMap;
 
 varying vec3 vWorldPosition;
@@ -95,23 +97,10 @@ varying float vWaveHeight;
 #include <cube_uv_reflection_fragment>
 
 const float WATER_IOR = 1.333;
-const float WATER_F0 = 0.02;
+const float WATER_F0 = 0.020373;
 
 float foamLuma(vec2 uv) {
   return dot(texture2D(uFoamMap, uv).rgb, vec3(0.3333333));
-}
-
-vec3 skyRadiance(vec3 direction) {
-  vec3 skyDirection = normalize(direction);
-  float horizon = smoothstep(-0.12, 0.52, skyDirection.y);
-  vec3 horizonColor = vec3(0.15, 0.34, 0.42);
-  vec3 zenithColor = vec3(0.022, 0.078, 0.16);
-  vec3 sky = mix(horizonColor, zenithColor, horizon);
-
-  float sunAlignment = max(dot(skyDirection, normalize(uSunDirection)), 0.0);
-  sky += vec3(1.0, 0.72, 0.42) * pow(sunAlignment, 256.0) * 1.25;
-  sky += vec3(1.0, 0.43, 0.16) * pow(sunAlignment, 28.0) * 0.018;
-  return sky;
 }
 
 void main() {
@@ -138,39 +127,8 @@ void main() {
   vec2 microSlope = vec2(broadDx * 0.38 + fineDx * 0.18, broadDz * 0.38 + fineDz * 0.18);
   normal = normalize(normal + (tangent * microSlope.x + bitangent * microSlope.y) * detailFade);
 
-  // Fresnel-Schlick for the air/water interface. F0 is the water/air
-  // interface value requested for this pass (Schlick exponent 5).
-  float cosTheta = clamp(dot(normal, viewDirection), 0.0, 1.0);
-  float fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - cosTheta, 5.0);
-  vec3 reflectedDirection = normalize(reflect(-viewDirection, normal));
-  vec3 analyticSky = skyRadiance(reflectedDirection);
-  vec3 envSky = textureCubeUV(envMap, reflectedDirection, 0.06).rgb;
-  vec3 reflectedSky = mix(analyticSky, envSky, 0.62);
-
-  vec2 reflectUv = vReflectCoord.xy / max(vReflectCoord.w, 1e-4);
-  float distortion = 0.032 * (0.45 + 1.15 / max(distanceToCamera, 4.0));
-  reflectUv += normal.xz * distortion;
-  float reflectEdge = smoothstep(0.0, 0.035, reflectUv.x)
-    * smoothstep(1.0, 0.965, reflectUv.x)
-    * smoothstep(0.0, 0.035, reflectUv.y)
-    * smoothstep(1.0, 0.965, reflectUv.y);
-  vec3 reflectedScene = texture2D(uReflectMap, clamp(reflectUv, 0.0, 1.0)).rgb;
-  vec3 reflection = mix(reflectedSky, reflectedScene, reflectEdge);
-
-  // Use the wave height as a depth proxy for a finite water column: troughs
-  // read denser and bluer while crests receive more transmitted sky color.
-  float shallowFactor = smoothstep(-0.58, 0.46, vWaveHeight);
-  float waterDepth = mix(2.4, 0.54, shallowFactor);
-  vec3 shallowColor = vec3(0.008, 0.105, 0.18);
-  vec3 deepColor = vec3(0.0015, 0.018, 0.045);
-  vec3 bodyColor = mix(deepColor, shallowColor, shallowFactor);
-  vec3 absorption = exp(-vec3(0.26, 0.95, 1.80) * waterDepth);
-  vec3 transmittedWater = bodyColor * (0.52 + absorption * 0.68);
-  vec3 waterColor = mix(transmittedWater, reflection, fresnel);
-
-  // Breakup follows compressed/curved crests, not height alone. The map
-  // modulates the analytic signal into irregular patches and dissipating
-  // streaks instead of a uniform white band.
+  // Breakup follows compressed/curved crests, not height alone. Compute foam
+  // before reflection so planar UV distortion can fade on white crests.
   vec2 foamUv = vOceanPosition * vec2(0.105, 0.14)
     + vec2(uTime * 0.009, -uTime * 0.006);
   vec3 breakupA = texture2D(uFoamMap, foamUv).rgb;
@@ -190,6 +148,37 @@ void main() {
     0.0,
     1.0
   );
+
+  // Fresnel-Schlick for the air/water interface. F0 is derived from the
+  // water IOR (roughly ((1.0 - 1.333) / (1.0 + 1.333))^2).
+  float cosTheta = clamp(dot(normal, viewDirection), 0.0, 1.0);
+  float fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - cosTheta, 5.0);
+  vec3 reflectedDirection = normalize(reflect(-viewDirection, normal));
+  vec3 envSky = textureCubeUV(envMap, reflectedDirection, 0.0).rgb;
+
+  vec2 reflUv = vReflectCoord.xy / max(vReflectCoord.w, 1e-4);
+  reflUv += normal.xz * uReflectionDistortion * (1.0 - foam);
+  float planarValid = step(1e-4, vReflectCoord.w)
+    * smoothstep(0.0, 0.04, reflUv.x)
+    * smoothstep(1.0, 0.96, reflUv.x)
+    * smoothstep(0.0, 0.04, reflUv.y)
+    * smoothstep(1.0, 0.96, reflUv.y);
+  vec3 reflected = mix(
+    envSky,
+    texture2D(tReflection, clamp(reflUv, 0.0, 1.0)).rgb,
+    planarValid
+  );
+
+  // Use the wave height as a depth proxy for a finite water column: troughs
+  // read denser and bluer while crests receive more transmitted sky color.
+  float shallowFactor = smoothstep(-0.58, 0.46, vWaveHeight);
+  float waterDepth = mix(2.4, 0.54, shallowFactor);
+  vec3 shallowColor = vec3(0.008, 0.105, 0.18);
+  vec3 deepColor = vec3(0.0015, 0.018, 0.045);
+  vec3 bodyColor = mix(deepColor, shallowColor, shallowFactor);
+  vec3 absorption = exp(-vec3(0.26, 0.95, 1.80) * waterDepth);
+  vec3 transmittedWater = bodyColor * (0.52 + absorption * 0.68);
+  vec3 waterColor = mix(transmittedWater, reflected, fresnel);
   vec3 foamColor = mix(vec3(0.16, 0.37, 0.42), vec3(0.72, 0.85, 0.81), breakup);
   waterColor = mix(waterColor, foamColor, foam * 0.52);
 
@@ -299,8 +288,9 @@ interface OceanUniforms {
   uTime: { value: number };
   uSunDirection: { value: THREE.Vector3 };
   uFoamMap: { value: THREE.Texture };
-  uReflectMap: { value: THREE.Texture };
-  uReflectMatrix: { value: THREE.Matrix4 };
+  tReflection: { value: THREE.Texture };
+  uReflectionMatrix: { value: THREE.Matrix4 };
+  uReflectionDistortion: { value: number };
   envMap: { value: THREE.Texture | null };
 }
 
@@ -316,15 +306,12 @@ const _target = new THREE.Vector3();
 const _q = new THREE.Vector4();
 const _skyPosition = new THREE.Vector3();
 
-function reflectionTextureSize(width: number, height: number, pixelRatio: number): {
+function reflectionTextureSize(width: number, height: number): {
   width: number;
   height: number;
 } {
-  const scale = 0.5;
-  return {
-    width: Math.max(REFLECT_MIN_EDGE, Math.min(REFLECT_MAX_EDGE, Math.floor(width * pixelRatio * scale))),
-    height: Math.max(REFLECT_MIN_EDGE, Math.min(REFLECT_MAX_EDGE, Math.floor(height * pixelRatio * scale))),
-  };
+  const edge = Math.min(width, height) <= 500 ? REFLECT_MOBILE_EDGE : REFLECT_DESKTOP_EDGE;
+  return { width: edge, height: edge };
 }
 
 function createReflectionTarget(width: number, height: number): THREE.WebGLRenderTarget {
@@ -427,9 +414,14 @@ function updatePlanarReflection(
   projectionMatrix.elements[10] = _clipPlane.z + 1.0 - REFLECT_CLIP_BIAS;
   projectionMatrix.elements[14] = _clipPlane.w;
 
+  const namedOcean = scene.getObjectByName('animated-ocean-surface');
   const previousVisible = oceanMesh.visible;
+  const previousNamedVisible = namedOcean ? namedOcean.visible : true;
   _skyPosition.copy(sky.position);
   oceanMesh.visible = false;
+  if (namedOcean) {
+    namedOcean.visible = false;
+  }
   sky.position.copy(reflectionCamera.position);
 
   const currentRenderTarget = renderer.getRenderTarget();
@@ -453,6 +445,9 @@ function updatePlanarReflection(
   renderer.setRenderTarget(currentRenderTarget);
 
   oceanMesh.visible = previousVisible;
+  if (namedOcean) {
+    namedOcean.visible = previousNamedVisible;
+  }
   sky.position.copy(_skyPosition);
 }
 
@@ -468,11 +463,30 @@ export function createOceanFeature(): RuntimeFeature {
   let reflectTarget: THREE.WebGLRenderTarget | null = null;
   let pmremTarget: THREE.WebGLRenderTarget | null = null;
   let reflectionCamera: THREE.PerspectiveCamera | null = null;
+  let lastPmremSun = new THREE.Vector3();
   let disposed = false;
+
+  const rebuildSkyPmrem = (
+    renderer: THREE.WebGLRenderer,
+    skyMesh: THREE.Mesh,
+    sunDirection: THREE.Vector3,
+  ): void => {
+    const next = createSkyPmrem(renderer, skyMesh);
+    const previous = pmremTarget;
+    pmremTarget = next;
+    lastPmremSun.copy(sunDirection);
+    if (oceanUniforms) {
+      oceanUniforms.envMap.value = next.texture;
+    }
+    if (scene) {
+      scene.environment = next.texture;
+    }
+    previous?.dispose();
+  };
 
   const detachOwnedEnvironmentTextures = (): void => {
     if (oceanUniforms) {
-      oceanUniforms.uReflectMap.value = null as unknown as THREE.Texture;
+      oceanUniforms.tReflection.value = null as unknown as THREE.Texture;
       oceanUniforms.envMap.value = null;
     }
   };
@@ -510,7 +524,6 @@ export function createOceanFeature(): RuntimeFeature {
         const size = reflectionTextureSize(
           context.viewport.width,
           context.viewport.height,
-          context.viewport.pixelRatio,
         );
         reflectTarget = createReflectionTarget(size.width, size.height);
         reflectionCamera = new THREE.PerspectiveCamera(
@@ -519,17 +532,16 @@ export function createOceanFeature(): RuntimeFeature {
           context.camera.near,
           context.camera.far,
         );
-        pmremTarget = createSkyPmrem(context.renderer, sky);
-        scene.environment = pmremTarget.texture;
-
         oceanUniforms = {
           uTime: { value: 0 },
           uSunDirection: { value: environment.sunDirection.clone() },
           uFoamMap: { value: activeFoamTexture },
-          uReflectMap: { value: reflectTarget.texture },
-          uReflectMatrix: { value: new THREE.Matrix4() },
-          envMap: { value: pmremTarget.texture },
+          tReflection: { value: reflectTarget.texture },
+          uReflectionMatrix: { value: new THREE.Matrix4() },
+          uReflectionDistortion: { value: REFLECT_DISTORTION },
+          envMap: { value: null },
         };
+        rebuildSkyPmrem(context.renderer, sky, environment.sunDirection);
 
         const oceanMaterial = new THREE.ShaderMaterial({
           // Fog and color-management uniforms are cloned per material; custom
@@ -603,6 +615,9 @@ export function createOceanFeature(): RuntimeFeature {
         return;
       }
       oceanUniforms.uTime.value = context.frame.elapsedSeconds;
+      if (oceanUniforms.uSunDirection.value.distanceToSquared(lastPmremSun) > 1e-8) {
+        rebuildSkyPmrem(context.renderer, sky, oceanUniforms.uSunDirection.value);
+      }
       // Keep the dome centered on the viewer without taking ownership of the
       // camera or changing any camera transform.
       sky.position.copy(context.camera.position);
@@ -614,7 +629,7 @@ export function createOceanFeature(): RuntimeFeature {
         sky,
         reflectionCamera,
         reflectTarget,
-        oceanUniforms.uReflectMatrix.value,
+        oceanUniforms.uReflectionMatrix.value,
       );
     },
 
@@ -625,11 +640,10 @@ export function createOceanFeature(): RuntimeFeature {
       const size = reflectionTextureSize(
         context.viewport.width,
         context.viewport.height,
-        context.viewport.pixelRatio,
       );
       if (reflectTarget.width !== size.width || reflectTarget.height !== size.height) {
         reflectTarget.setSize(size.width, size.height);
-        oceanUniforms.uReflectMap.value = reflectTarget.texture;
+        oceanUniforms.tReflection.value = reflectTarget.texture;
       }
     },
 
