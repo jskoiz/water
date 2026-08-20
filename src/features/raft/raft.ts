@@ -16,6 +16,14 @@ import type { OceanSurfaceService } from './types';
 const WOOD_TEXTURE_URL = '/raft/raft-wood-albedo.png';
 const SAIL_TEXTURE_URL = '/raft/raft-sail-albedo.png';
 const KNOTS_PER_METRE_PER_SECOND = 1.943844;
+// Dominant Gerstner D0, unitized. Apparent wind is W - v_boat.
+const WIND_SEA_X = 0.970;
+const WIND_SEA_Z = 0.243;
+const WIND_SEA_LENGTH = Math.hypot(WIND_SEA_X, WIND_SEA_Z);
+const WIND_DIR_X = WIND_SEA_X / WIND_SEA_LENGTH;
+const WIND_DIR_Z = WIND_SEA_Z / WIND_SEA_LENGTH;
+const WIND_SPEED_MPS = 4.2;
+const SAIL_RUN_SPEED = 3.35;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const MAX_PITCH = 0.45;
 const MAX_ROLL = 0.52;
@@ -219,6 +227,8 @@ class RaftController {
   private heading = 0;
   private speedMetersPerSecond = 0;
   private sailPower = 0.72;
+  private apparentWindX = WIND_DIR_X * WIND_SPEED_MPS;
+  private apparentWindZ = WIND_DIR_Z * WIND_SPEED_MPS;
   private steering = 0;
   private pitch = 0;
   private roll = 0;
@@ -281,7 +291,7 @@ class RaftController {
     this.updateControls(context, deltaSeconds);
     this.updateMovement(deltaSeconds);
     this.updateSurface(deltaSeconds, context.frame.elapsedSeconds);
-    this.updateSail(context.frame.elapsedSeconds);
+    this.updateSail();
     this.updateWake(context.frame.elapsedSeconds);
     this.updateCamera(context, deltaSeconds);
     this.hud?.update(
@@ -730,7 +740,19 @@ class RaftController {
   }
 
   private updateMovement(deltaSeconds: number): void {
-    const targetSpeed = this.sailPower * 3.35;
+    const headingX = Math.sin(this.heading);
+    const headingZ = -Math.cos(this.heading);
+    const windX = WIND_DIR_X * WIND_SPEED_MPS;
+    const windZ = WIND_DIR_Z * WIND_SPEED_MPS;
+    this.apparentWindX = windX - headingX * this.speedMetersPerSecond;
+    this.apparentWindZ = windZ - headingZ * this.speedMetersPerSecond;
+    const apparentLength = Math.hypot(this.apparentWindX, this.apparentWindZ);
+    const apparentDotHeading = apparentLength > 1e-4
+      ? (this.apparentWindX * headingX + this.apparentWindZ * headingZ) / apparentLength
+      : 0;
+    // Beat is slow (dot<=0 → 0.35); run is fast (dot→1 → 1). W/S still sets sailPower.
+    const pointOfSail = 0.35 + 0.65 * Math.max(0, apparentDotHeading);
+    const targetSpeed = this.sailPower * pointOfSail * SAIL_RUN_SPEED;
     this.speedMetersPerSecond = damp(this.speedMetersPerSecond, targetSpeed, 1.6, deltaSeconds);
     const turnRate = 0.2 + this.sailPower * 0.72;
     this.heading += this.steering * turnRate * deltaSeconds;
@@ -929,17 +951,31 @@ class RaftController {
     }
   }
 
-  private updateSail(elapsedSeconds: number): void {
+  private updateSail(): void {
     const geometry = this.sailGeometry;
     const basePositions = this.sailBasePositions;
     if (!geometry || !basePositions) {
       return;
     }
     const position = geometry.getAttribute('position');
-    const billow = Math.sin(elapsedSeconds * 1.4) * 0.12 * (0.35 + this.sailPower);
-    position.setZ(0, basePositions[2] + billow * 0.1);
-    position.setZ(1, basePositions[5] + billow * 0.45);
-    position.setZ(2, basePositions[8] + billow);
+    const localX = this.apparentWindX * Math.cos(this.heading)
+      + this.apparentWindZ * Math.sin(this.heading);
+    const localZ = this.apparentWindX * -Math.sin(this.heading)
+      + this.apparentWindZ * Math.cos(this.heading);
+    const apparentLength = Math.hypot(localX, localZ);
+    const fill = apparentLength > 1e-4
+      ? 0.12 * (0.35 + this.sailPower) * Math.min(apparentLength / WIND_SPEED_MPS, 1)
+      : 0;
+    const dirX = apparentLength > 1e-4 ? localX / apparentLength : 0;
+    const dirZ = apparentLength > 1e-4 ? localZ / apparentLength : 0;
+    const weights = [0.1, 0.45, 1];
+    for (let index = 0; index < 3; index += 1) {
+      const weight = weights[index] * fill;
+      const baseIndex = index * 3;
+      position.setX(index, basePositions[baseIndex] + dirX * weight);
+      position.setY(index, basePositions[baseIndex + 1]);
+      position.setZ(index, basePositions[baseIndex + 2] + dirZ * weight);
+    }
     position.needsUpdate = true;
   }
 
