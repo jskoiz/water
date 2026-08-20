@@ -2,7 +2,7 @@
 
 This is the coordinator-owned source of truth for implementation dispatches. A task marked `ready` is queued for a future worker; it is not active until the coordinator records a worker thread, branch, worktree, and base commit.
 
-Foundation, first-pass features, QA, fog repair, first visual-polish lanes, and the second screenshot's narrow horizon-scale and camera-framing corrections are integrated. Final desktop and mobile browser acceptance passed on verified local `main`.
+Foundation, first-pass features, QA, fog repair, first visual-polish lanes, and the second screenshot's narrow horizon-scale and camera-framing corrections are integrated. A research-backed physical-water round is active from clean baseline `d90be9d` in three disjoint lanes.
 
 Every implementation dispatch uses `gpt-5.6-luna` at `max` reasoning effort and contains exactly one lane plus the exclusive write scope recorded below.
 
@@ -22,9 +22,12 @@ Use `blocked` whenever a dependency or acceptance decision prevents dispatch. On
 | `OCE-003` | `ocean-rendering` | `integrated` | Integrated browser fatal after `OCE-002` composition | `/root/ocean_oce003` | `c1/ocean-fog-fix` / `/Users/jk/Desktop/water/.worktrees/oce003` / base `cf21135` | `src/features/ocean/ocean.ts`; `tests/ocean/**` |
 | `OCE-004` | `ocean-rendering` | `integrated` | Repaired runtime screenshot comparison at `055184c` | `/root/ocean_oce004` | `c1/ocean-visual-polish` / `/Users/jk/Desktop/water/.worktrees/oce004` / base `055184c` | `src/features/ocean/**`; `src/features/environment/**` |
 | `OCE-005` | `ocean-rendering` | `integrated` | Second screenshot showed foreground-sized destination | `/root/ocean_oce005` | `c1/horizon-scale-fix` / `/Users/jk/Desktop/water/.worktrees/oce005` / base `3e7bfb7` | `src/features/environment/atmosphere.ts` |
+| `OCE-006` | `ocean-rendering` | `active` | Accepted baseline `d90be9d`; physical-water research complete | `/root/ocean_oce006` | `c1/ocean-physical-water` / `/Users/jk/Desktop/water/.worktrees/oce006` / base `d90be9d` | `src/features/ocean/waves.ts`; `src/features/ocean/ocean.ts`; optional `tests/ocean/**` |
+| `ENV-001` | `ocean-rendering` | `active` | Accepted baseline `d90be9d`; atmosphere research complete | `/root/environment_env001` | `c1/environment-physical-light` / `/Users/jk/Desktop/water/.worktrees/env001` / base `d90be9d` | `src/features/environment/atmosphere.ts` |
 | `RAFT-001` | `raft-systems` | `integrated` | `FND-001` integrated and runtime contracts reviewed at `ccfc531` | `/root/raft_raft001` | `c1/raft-systems` / `/private/tmp/water-raft001` / base `ccfc531` | `src/features/raft/**`; `public/raft/**`; `tests/raft/**` |
 | `RAFT-002` | `raft-systems` | `integrated` | Repaired runtime screenshot comparison at `055184c` | `/root/raft_raft002` | `c1/raft-visual-polish` / `/Users/jk/Desktop/water/.worktrees/raft002` / base `055184c` | `src/features/raft/**` |
 | `RAFT-003` | `raft-systems` | `integrated` | Second screenshot clipped deck/hull below viewport | `/root/raft_raft003` | `c1/raft-framing-fix` / `/Users/jk/Desktop/water/.worktrees/raft003` / base `3e7bfb7` | `src/features/raft/raft.ts` |
+| `RAFT-004` | `raft-systems` | `active` | Accepted baseline `d90be9d`; marine-response research complete | `/root/raft_raft004` | `c1/raft-physical-response` / `/Users/jk/Desktop/water/.worktrees/raft004` / base `d90be9d` | `src/features/raft/raft.ts` |
 | `QA-001` | `world-qa` | `integrated` | `FND-001` integrated; dev URL `http://127.0.0.1:5173`; Codex In-app Browser runner | `/root/qa_qa001` | `c1/world-qa-smoke` / `/private/tmp/water-qa001` / base `ccfc531` | `qa/**` |
 
 Paths not listed in a worker's row are out of scope. Dependency or shared-file changes are returned to the coordinator for a separate dispatch; workers do not widen their own scope.
@@ -62,6 +65,25 @@ Paths not listed in a worker's row are out of scope. Dependency or shared-file c
 - Re-run the suite after the ocean and raft lanes are integrated. Report defects back to the owning lane; fixes require a new scoped dispatch.
 - Handoff includes changed paths, one focused commit, checks run, evidence locations, and remaining risks.
 
+### OCE-006 — physical ocean surface and shading
+
+- Replace vertical-only sine motion with a stable, wind-driven Gerstner-style spectrum using deep-water dispersion, bounded steepness, analytic tangents/normals, and a CPU sampler that remains aligned with rendered displacement.
+- Derive foam from crest compression, slope, or curvature rather than raw height alone; keep the required breakup asset and the exact `ocean.surface.v1` service boundary.
+- Add distance-filtered micro-normal detail, water-IOR Fresnel-Schlick, reflected-sky/transmitted-water separation, restrained sun glitter, trough absorption, and Three.js tone-mapping/color-space integration.
+- Preserve lifecycle, fog, loading, disposal, mobile support, and a bounded tessellation/shader cost.
+
+### ENV-001 — physical atmosphere and scene lighting
+
+- Upgrade the sky with efficient Rayleigh/Mie phase approximations, horizon optical depth, aerial perspective, a physically scaled sun disc, and layered clouds with light/self-shadow cues.
+- Rebalance directional and hemispheric light, PBR environment materials, and shadow-ready islands/lighthouse without changing the public environment interface or destination framing.
+- Keep the shader compatible with Three.js tone mapping/color management and avoid new dependencies or assets.
+
+### RAFT-004 — damped marine motion
+
+- Use a stable second-order heave/roll/pitch response with restoring forces, hydrodynamic damping, bounded integration, and improved symmetric surface-contact sampling.
+- Preserve `ocean.surface.v1`, controls, HUD, camera, assets, disposal, and responsive framing.
+- Make wake and spray react to speed and vertical impact, and make raft materials/meshes ready for coordinator-enabled shadows.
+
 ## Dependency and lockfile policy
 
 - Foundation uses npm and commits exactly one `package-lock.json`; no alternate lockfile is allowed.
@@ -84,7 +106,7 @@ The accepted desktop gameplay concept is `/Users/jk/.codex/visualizations/2026/0
 
 The visual target is a full-viewport, third-person raft scene with a high marine horizon, deep teal waves, foam wake, layered pale sky, distant islands/lighthouse, weathered wood and canvas, and sparse white navigation HUD. Allowed visible HUD copy is `WATER`, `W`, `N`, `E`, `WIND 12 KN`, `WASD STEER`, `DRAG LOOK`, `6.4 KN`, `SAIL`, and `72%`.
 
-## Final integrated acceptance
+## Previous integrated acceptance
 
 The coordinator tested source commit `ca882e9` from the main checkout at `http://127.0.0.1:5173/` after a clean dev-server restart.
 
@@ -97,6 +119,14 @@ The coordinator tested source commit `ca882e9` from the main checkout at `http:/
 - Accepted screenshots: `/Users/jk/.codex/visualizations/2026/08/20/01a01c90-8bec-75d2-93f7-b299a7f64d01/water-final-desktop.jpg` and `/Users/jk/.codex/visualizations/2026/08/20/01a01c90-8bec-75d2-93f7-b299a7f64d01/water-final-mobile.jpg`.
 - Performance acceptance remains deferred because no device/browser profile, measurement method, or budget was agreed.
 
+## Physical-water research basis
+
+- Mark Finch, NVIDIA GPU Gems, "Effective Water Simulation from Physical Models": directional/Gerstner waves, bounded steepness, analytic surface orientation, fine normal detail, Fresnel behavior, and distance filtering.
+- Jerry Tessendorf, "Simulating Ocean Water": wind-driven spectral relationships, dispersion, choppiness, and ocean-surface rendering.
+- Eric Bruneton and Fabrice Neyret, "Precomputed Atmospheric Scattering," plus Preetham, Shirley, and Smits, "A Practical Analytic Model for Daylight": Rayleigh/Mie sky radiance, sun/sky coupling, and aerial perspective.
+- Three.js `WebGLRenderer`, color-management, `Water`, and `PMREMGenerator` documentation: sRGB output, tone mapping, shadow-map integration, water reflection inputs, and physically based environment filtering.
+- Thor I. Fossen's marine-craft model: restoring forces, added-mass intuition, and positive hydrodynamic damping for stable real-time heave/roll/pitch response.
+
 ## Shared and coordinator-owned paths
 
 The coordinator owns `AGENTS.md`, `ORCHESTRATOR.md`, `DISPATCH.md`, `.orchestration.json`, `README.md`, integration composition after `FND-001`, and shared manifest/configuration edits after `FND-001`. A worker that needs one of these paths must stop and request a separately recorded scope change.
@@ -108,6 +138,8 @@ The coordinator owns `AGENTS.md`, `ORCHESTRATOR.md`, `DISPATCH.md`, `.orchestrat
 3. Rebase the board's scopes on the integrated foundation. Dispatch `OCE-001`, `RAFT-001`, and `QA-001` in parallel from the same verified `main` commit when worker capacity permits.
 4. Review and validate each feature independently before merging. Serialize any coordinator-owned composition changes.
 5. Re-run `QA-001` after both feature lanes and coordinator-owned composition are integrated. Treat its browser evidence, and any separately agreed visual/performance criteria, as the merge-readiness gate for the first complete slice.
+6. For the physical-water round, review `OCE-006`, `ENV-001`, and `RAFT-004` independently, merge only passing scoped diffs, then serialize renderer tone-mapping/shadow integration on `main`.
+7. Re-run full build, HTTP smoke, desktop/mobile Browser QA, interaction proof, console review, and native-concept screenshot comparison. Dispatch narrow repair lanes for any material defect.
 
 ## Dispatch record template
 
@@ -129,7 +161,10 @@ At handoff, record:
 | `OCE-003` | `cf21135` | `f23066c` | Exact seven-line shader diff reviewed | Worker and coordinator: typecheck/build; coordinator browser rerun cleared fatal | `055184c` | Fog retained with cloned complete uniforms; post-repair log segment has no new error. |
 | `OCE-004` | `055184c` | `9d91b4e` | Scope/diff and CPU/shader parity reviewed | Worker and coordinator: typecheck/build; worker browser desktop/mobile | `3e7bfb7` | Clouds/waves/glints improved; second screenshot found destination overscaled. |
 | `OCE-005` | `3e7bfb7` | `b96faba` | Exact atmosphere-only diff reviewed; destination association and all unrelated environment values preserved | Worker and coordinator: typecheck/build/diff check; worker projection assertions at 1586x992 | `40d9f6f` | Final desktop screenshot accepted the reduced horizon destination. |
+| `OCE-006` | `d90be9d` | _Active_ | Research-backed scope and no-overlap boundary dispatched | _Pending handoff_ | _Not merged_ | Gerstner geometry, analytic normals, physical shading, and foam only. |
+| `ENV-001` | `d90be9d` | _Active_ | Research-backed one-file atmosphere boundary dispatched | _Pending handoff_ | _Not merged_ | Sky, lighting, environment materials, and shadow configuration only. |
 | `RAFT-001` | `ccfc531` | `d995cc3` | Full scope/diff and lifecycle review passed; asset hashes match | Worker and coordinator: typecheck/build; diff checks | `c6e6d52` | Live integration with `ocean.surface.v1` and browser proof remain. |
 | `RAFT-002` | `055184c` | `5dec595` | Scope/diff and resource lifecycle reviewed | Worker and coordinator: typecheck/build; focused assertions | `0b8f5c8` | Wake/material/HUD improved; second screenshot found camera over-zoomed. |
 | `RAFT-003` | `3e7bfb7` | `0fb8141` | Exact raft-only diff reviewed; existing target and drag-look controls preserved | Worker and coordinator: typecheck/build/diff check; worker 1586x992 mast/hull framing assertion | `ca882e9` | Final desktop screenshot accepted the complete raft framing. |
+| `RAFT-004` | `d90be9d` | _Active_ | Research-backed one-file marine-motion boundary dispatched | _Pending handoff_ | _Not merged_ | Damped heave/roll/pitch, contact sampling, wake/spray, and shadow readiness only. |
 | `QA-001` | `ccfc531` | `ea7d849` | Full scope/diff review passed; seven Water markers defaulted | Worker and coordinator: syntax/import checks; HTTP smoke; desktop/mobile In-app Browser evidence; input and resize | `e200361` | Final functional and visual smoke passed; performance budgets remain intentionally deferred. |
