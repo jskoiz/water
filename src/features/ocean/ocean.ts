@@ -77,7 +77,6 @@ uniform sampler2D uSceneDepth;
 uniform float uCameraNear;
 uniform float uCameraFar;
 uniform mat4 uProjMatrix;
-uniform sampler2D envMap;
 
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
@@ -89,14 +88,25 @@ varying float vWaveHeight;
 
 #include <packing>
 #include <fog_pars_fragment>
-#include <cube_uv_reflection_fragment>
 
 const float WATER_IOR = 1.333;
 const float WATER_F0 = 0.020373;
-#define SSR_STEPS 32
 
 float foamLuma(vec2 uv) {
   return dot(texture2D(uFoamMap, uv).rgb, vec3(0.3333333));
+}
+
+vec3 skyRadiance(vec3 direction) {
+  vec3 skyDirection = normalize(direction);
+  float horizon = smoothstep(-0.12, 0.52, skyDirection.y);
+  vec3 horizonColor = vec3(0.15, 0.34, 0.42);
+  vec3 zenithColor = vec3(0.022, 0.078, 0.16);
+  vec3 sky = mix(horizonColor, zenithColor, horizon);
+
+  float sunAlignment = max(dot(skyDirection, normalize(uSunDirection)), 0.0);
+  sky += vec3(1.0, 0.72, 0.42) * pow(sunAlignment, 256.0) * 1.25;
+  sky += vec3(1.0, 0.43, 0.16) * pow(sunAlignment, 28.0) * 0.018;
+  return sky;
 }
 
 float sceneEyeDepth(vec2 uv) {
@@ -109,8 +119,8 @@ vec4 marchSceneReflection(vec3 origin, vec3 direction) {
   float stepLen = 2.2;
   float prevDiff = -1.0;
   vec2 prevUv = vec2(0.0);
-  for (int i = 1; i <= SSR_STEPS; i += 1) {
-    vec3 point = origin + direction * (stepLen * float(i));
+  for (int i = 0; i < 32; i++) {
+    vec3 point = origin + direction * (stepLen * float(i + 1));
     vec4 clip = uProjMatrix * viewMatrix * vec4(point, 1.0);
     if (clip.w <= 0.0) {
       break;
@@ -126,7 +136,7 @@ vec4 marchSceneReflection(vec3 origin, vec3 direction) {
       float t = prevDiff < 0.0 ? 1.0 : (-prevDiff / (diff - prevDiff));
       vec2 hitUv = mix(prevUv, uv, clamp(t, 0.0, 1.0));
       vec2 edge = smoothstep(vec2(0.0), vec2(0.14), hitUv) * smoothstep(vec2(0.0), vec2(0.14), 1.0 - hitUv);
-      float confidence = edge.x * edge.y * (1.0 - float(i) / float(SSR_STEPS) * 0.4);
+      float confidence = edge.x * edge.y * (1.0 - float(i) / 32.0 * 0.4);
       return vec4(texture2D(uSceneColor, hitUv).rgb, confidence);
     }
     prevDiff = diff;
@@ -186,7 +196,7 @@ void main() {
   float cosTheta = clamp(dot(normal, viewDirection), 0.0, 1.0);
   float fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - cosTheta, 5.0);
   vec3 reflectedDirection = normalize(reflect(-viewDirection, normal));
-  vec3 envSky = textureCubeUV(envMap, reflectedDirection, 0.0).rgb;
+  vec3 envSky = skyRadiance(reflectedDirection);
   vec4 sceneHit = marchSceneReflection(vWorldPosition, reflectedDirection);
   vec3 reflected = mix(envSky, sceneHit.rgb, clamp(sceneHit.a, 0.0, 1.0));
 
@@ -504,9 +514,6 @@ export function createOceanFeature(): RuntimeFeature {
           uniforms: {
             ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
             ...oceanUniforms,
-          },
-          defines: {
-            ENVMAP_TYPE_CUBE_UV: '',
           },
           vertexShader: OCEAN_VERTEX_SHADER,
           fragmentShader: OCEAN_FRAGMENT_SHADER,
