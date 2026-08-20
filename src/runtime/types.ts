@@ -137,7 +137,7 @@ export interface RuntimeContext {
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
   readonly renderer: THREE.WebGLRenderer;
-  readonly clock: THREE.Clock;
+  readonly timer: THREE.Timer;
   readonly config: RuntimeConfig;
   readonly viewport: RuntimeViewport;
   readonly input: InputSnapshot;

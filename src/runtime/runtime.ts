@@ -42,7 +42,7 @@ export class Runtime {
   public readonly scene: THREE.Scene;
   public readonly camera: THREE.PerspectiveCamera;
   public readonly renderer: THREE.WebGLRenderer;
-  public readonly clock: THREE.Clock;
+  public readonly timer: THREE.Timer;
 
   private readonly canvas: HTMLCanvasElement;
   private readonly features: readonly RuntimeFeature[];
@@ -72,7 +72,6 @@ export class Runtime {
       this.config.camera.far,
     );
     this.camera.position.fromArray(this.config.camera.position);
-    this.clock = new THREE.Clock(false);
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
@@ -82,6 +81,8 @@ export class Runtime {
     });
     this.renderer.setClearColor(this.config.clearColor);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.timer = new THREE.Timer();
+    this.timer.connect(document);
 
     this.resizeObserver = typeof ResizeObserver === 'undefined'
       ? null
@@ -106,6 +107,7 @@ export class Runtime {
     }
 
     this.stopRequested = false;
+    this.timer.reset();
     this.startPromise = this.initialize();
     try {
       await this.startPromise;
@@ -120,7 +122,6 @@ export class Runtime {
     }
     this.cancelAnimationFrame();
     this.stopRequested = true;
-    this.clock.stop();
     this.lifecycle = 'stopped';
     this.ui.setStatus('Runtime stopped');
   }
@@ -149,6 +150,7 @@ export class Runtime {
       this.reportFatalError(error);
     }
 
+    this.timer.dispose();
     this.renderer.dispose();
     this.ui.dispose();
     this.lifecycle = 'disposed';
@@ -163,7 +165,6 @@ export class Runtime {
       this.ui.setStatus(`Foundation diagnostic shell · ${this.features.length} feature${this.features.length === 1 ? '' : 's'}`);
       this.input.attach();
       this.applyResize();
-      this.clock.start();
 
       const context = this.createContext(this.input.getSnapshot());
       for (const feature of this.features) {
@@ -192,31 +193,31 @@ export class Runtime {
       }
       this.ui.loading.complete('Runtime ready');
       this.lifecycle = 'running';
-      this.renderFrame();
+      this.animationFrame = window.requestAnimationFrame(this.renderFrame);
     } catch (error) {
       if (this.initializationAborted) {
         return;
       }
       this.lifecycle = 'error';
       this.cancelAnimationFrame();
-      this.clock.stop();
       this.ui.loading.fail('Runtime failed to start');
       this.reportFatalError(error);
     }
   }
 
-  private readonly renderFrame = (): void => {
+  private readonly renderFrame = (timestamp: number): void => {
     if (this.lifecycle !== 'running') {
       return;
     }
 
     try {
+      this.timer.update(timestamp);
       const input = this.input.beginFrame();
-      const deltaSeconds = Math.min(this.clock.getDelta(), 0.25);
+      const deltaSeconds = Math.min(this.timer.getDelta(), 0.25);
       const frame: FrameContext = {
         frame: this.frameNumber,
         deltaSeconds,
-        elapsedSeconds: this.clock.elapsedTime,
+        elapsedSeconds: this.timer.getElapsed(),
         viewport: this.viewport,
       };
       this.frameNumber += 1;
@@ -236,7 +237,6 @@ export class Runtime {
     } catch (error) {
       this.lifecycle = 'error';
       this.cancelAnimationFrame();
-      this.clock.stop();
       this.ui.loading.fail('Runtime stopped after an error');
       this.reportFatalError(error);
     }
@@ -283,7 +283,7 @@ export class Runtime {
       scene: this.scene,
       camera: this.camera,
       renderer: this.renderer,
-      clock: this.clock,
+      timer: this.timer,
       config: this.config,
       viewport: this.viewport,
       input,
