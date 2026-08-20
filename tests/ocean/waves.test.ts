@@ -78,10 +78,44 @@ test('generated GLSL mirrors every CPU wave component', () => {
   const terms = shader.match(/addGerstnerWave\(result,/g) ?? [];
   assert.equal(terms.length, OCEAN_WAVES.length);
   assert.match(shader, /OCEAN_STEEPNESS = 0\.82/);
-  assert.match(shader, /OCEAN_WAVE_COUNT = 8\.0/);
+  assert.match(shader, new RegExp(`OCEAN_WAVE_COUNT = ${OCEAN_WAVES.length}\\.0`));
   for (const wave of OCEAN_WAVES) {
     assert.match(shader, new RegExp(
       `vec2\\(${wave.directionX.toFixed(9).replace(/0+$/, '').replace(/\\.$/, '')}`,
     ));
   }
+});
+
+test('wind spectrum spans irregular scales without overpowering cross-chop', () => {
+  assert.equal(OCEAN_WAVES.length, 12);
+  const wavelengths = OCEAN_WAVES.map((wave) => wave.wavelength);
+  const amplitudes = OCEAN_WAVES.map((wave) => wave.amplitude);
+  const minWavelength = Math.min(...wavelengths);
+  const maxWavelength = Math.max(...wavelengths);
+  assert.ok(maxWavelength / minWavelength > 80, 'spectrum should cover long swell through fine chop');
+
+  const wavelengthRatios = wavelengths.slice(1).map((wavelength, index) => wavelength / wavelengths[index]);
+  const ratioRange = Math.max(...wavelengthRatios) - Math.min(...wavelengthRatios);
+  assert.ok(ratioRange > 0.08, 'wavelength spacing should not be a single geometric progression');
+
+  const windDirection = OCEAN_WAVES[0];
+  const windEnergy = OCEAN_WAVES.reduce((sum, wave) => (
+    sum + wave.amplitude * Math.max(
+      wave.directionX * windDirection.directionX + wave.directionZ * windDirection.directionZ,
+      0,
+    )
+  ), 0);
+  const crossChopEnergy = OCEAN_WAVES.reduce((sum, wave) => {
+    const alignment = wave.directionX * windDirection.directionX
+      + wave.directionZ * windDirection.directionZ;
+    return sum + wave.amplitude * Math.max(0, 0.72 - alignment);
+  }, 0);
+  assert.ok(windEnergy > amplitudes.reduce((sum, amplitude) => sum + amplitude, 0) * 0.84);
+  assert.ok(crossChopEnergy < windEnergy * 0.16, 'cross-chop should break symmetry without dominating the wind sea');
+
+  const highFrequencyEnergy = OCEAN_WAVES.reduce(
+    (sum, wave) => sum + (wave.wavelength < 2 ? wave.amplitude : 0),
+    0,
+  );
+  assert.ok(highFrequencyEnergy > 0.04, 'short components should still shape irregular silhouettes');
 });
