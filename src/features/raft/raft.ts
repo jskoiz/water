@@ -87,6 +87,99 @@ function isFiniteVector(vector: THREE.Vector3): boolean {
   return Number.isFinite(vector.x) && Number.isFinite(vector.y) && Number.isFinite(vector.z);
 }
 
+interface DerivedSurfaceMaps {
+  readonly normalMap: THREE.DataTexture;
+  readonly roughnessMap: THREE.DataTexture;
+}
+
+interface DerivedSurfaceMapOptions {
+  readonly normalStrength: number;
+  readonly roughnessBias: number;
+  readonly roughnessScale: number;
+}
+
+function sampleAlbedoLuma(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+): number {
+  const wrappedX = ((x % width) + width) % width;
+  const wrappedY = ((y % height) + height) % height;
+  const index = (wrappedY * width + wrappedX) * 4;
+  return (data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114) / 255;
+}
+
+function createDerivedSurfaceMaps(
+  albedo: THREE.Texture,
+  options: DerivedSurfaceMapOptions,
+): DerivedSurfaceMaps {
+  const image = albedo.image as { width?: number; height?: number } | undefined;
+  const width = image?.width ?? 0;
+  const height = image?.height ?? 0;
+  if (width < 2 || height < 2) {
+    throw new Error('Raft albedo texture is missing a readable image for derived maps.');
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) {
+    throw new Error('Raft material maps require a 2D canvas context.');
+  }
+  context.drawImage(image as CanvasImageSource, 0, 0);
+  const pixels = context.getImageData(0, 0, width, height).data;
+  const normalData = new Uint8Array(width * height * 4);
+  const roughnessData = new Uint8Array(width * height * 4);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const dx = sampleAlbedoLuma(pixels, width, height, x + 1, y)
+        - sampleAlbedoLuma(pixels, width, height, x - 1, y);
+      const dy = sampleAlbedoLuma(pixels, width, height, x, y + 1)
+        - sampleAlbedoLuma(pixels, width, height, x, y - 1);
+      const normalX = -dx * options.normalStrength;
+      const normalY = -dy * options.normalStrength;
+      const inverseLength = 1 / Math.hypot(normalX, normalY, 1);
+      const pixel = (y * width + x) * 4;
+      normalData[pixel] = Math.round((normalX * inverseLength * 0.5 + 0.5) * 255);
+      normalData[pixel + 1] = Math.round((normalY * inverseLength * 0.5 + 0.5) * 255);
+      normalData[pixel + 2] = Math.round((inverseLength * 0.5 + 0.5) * 255);
+      normalData[pixel + 3] = 255;
+
+      const roughness = clamp(
+        options.roughnessBias + sampleAlbedoLuma(pixels, width, height, x, y) * options.roughnessScale,
+        0.16,
+        1,
+      );
+      const roughnessByte = Math.round(roughness * 255);
+      roughnessData[pixel] = roughnessByte;
+      roughnessData[pixel + 1] = roughnessByte;
+      roughnessData[pixel + 2] = roughnessByte;
+      roughnessData[pixel + 3] = 255;
+    }
+  }
+
+  const configureMap = (texture: THREE.DataTexture): THREE.DataTexture => {
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.generateMipmaps = true;
+    texture.flipY = albedo.flipY;
+    texture.colorSpace = THREE.NoColorSpace;
+    texture.needsUpdate = true;
+    return texture;
+  };
+
+  return {
+    normalMap: configureMap(new THREE.DataTexture(normalData, width, height)),
+    roughnessMap: configureMap(new THREE.DataTexture(roughnessData, width, height)),
+  };
+}
+
 /**
  * Advance x'' + 2*zeta*omega*x' + omega^2*x = 0 exactly over one frame.
  *
@@ -222,6 +315,7 @@ class RaftController {
   private sailBasePositions: Float32Array | null = null;
   private woodTexture: THREE.Texture | null = null;
   private sailTexture: THREE.Texture | null = null;
+  private readonly waterlineUniform = { value: 0 };
   private wakeUniforms: {
     readonly uTime: { value: number };
     readonly uStrength: { value: number };
@@ -368,32 +462,52 @@ class RaftController {
     this.wakeGroup.name = 'raft-wake';
     this.contactFoamGroup.name = 'raft-contact-foam';
 
-    const woodMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
+    const woodMaps = this.registerDerivedMaps(this.woodTexture, {
+      normalStrength: 2.1,
+      roughnessBias: 0.36,
+      roughnessScale: 0.4,
+    });
+    const sailMaps = this.registerDerivedMaps(this.sailTexture, {
+      normalStrength: 1.15,
+      roughnessBias: 0.62,
+      roughnessScale: 0.22,
+    });
+
+    const woodMaterial = this.applyWaterlineWetness(this.registerMaterial(new THREE.MeshStandardMaterial({
       color: 0xa9794f,
       map: this.woodTexture,
+      normalMap: woodMaps.normalMap,
+      normalScale: new THREE.Vector2(0.62, 0.62),
+      roughnessMap: woodMaps.roughnessMap,
       roughness: 0.76,
       metalness: 0.01,
       emissive: 0x2c1a0d,
       emissiveIntensity: 0.08,
-    }));
-    const darkWoodMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
+    })));
+    const darkWoodMaterial = this.applyWaterlineWetness(this.registerMaterial(new THREE.MeshStandardMaterial({
       color: 0x67442f,
       map: this.woodTexture,
+      normalMap: woodMaps.normalMap,
+      normalScale: new THREE.Vector2(0.48, 0.48),
+      roughnessMap: woodMaps.roughnessMap,
       roughness: 0.82,
       metalness: 0.01,
       emissive: 0x24150a,
       emissiveIntensity: 0.1,
-    }));
-    const ropeMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
+    })));
+    const ropeMaterial = this.applyWaterlineWetness(this.registerMaterial(new THREE.MeshStandardMaterial({
       color: 0x765639,
       roughness: 0.88,
       metalness: 0,
       emissive: 0x1b1008,
       emissiveIntensity: 0.06,
-    }));
+    })));
     const sailMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
       color: 0xe8d6b4,
       map: this.sailTexture,
+      normalMap: sailMaps.normalMap,
+      normalScale: new THREE.Vector2(0.34, 0.34),
+      roughnessMap: sailMaps.roughnessMap,
       roughness: 0.84,
       metalness: 0,
       side: THREE.DoubleSide,
@@ -878,6 +992,7 @@ class RaftController {
       this.previousHeaveTarget = heaveTarget;
       this.surfaceTargetInitialized = true;
       this.wakeImpact = 0;
+      this.waterlineUniform.value = averageHeight;
       this.validateMotionState();
       this.raftGroup.position.set(this.positionX, this.positionY, this.positionZ);
       this.raftGroup.rotation.set(this.pitch, this.heading, this.roll);
@@ -951,6 +1066,7 @@ class RaftController {
       this.wakeImpact * Math.exp(-8.5 * deltaSeconds),
       impactSignal,
     );
+    this.waterlineUniform.value = averageHeight;
     this.validateMotionState();
     this.raftGroup.position.set(this.positionX, this.positionY, this.positionZ);
     this.raftGroup.rotation.set(this.pitch, this.heading, this.roll);
@@ -1128,6 +1244,60 @@ class RaftController {
 
   private registerMaterial<T extends THREE.Material>(material: T): T {
     this.materials.add(material);
+    return material;
+  }
+
+  private registerDerivedMaps(
+    albedo: THREE.Texture,
+    options: DerivedSurfaceMapOptions,
+  ): DerivedSurfaceMaps {
+    const maps = createDerivedSurfaceMaps(albedo, options);
+    this.textures.add(maps.normalMap);
+    this.textures.add(maps.roughnessMap);
+    return maps;
+  }
+
+  private applyWaterlineWetness(
+    material: THREE.MeshStandardMaterial,
+  ): THREE.MeshStandardMaterial {
+    const waterline = this.waterlineUniform;
+    material.onBeforeCompile = (shader) => {
+      shader.uniforms.uWaterHeight = waterline;
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          varying vec3 vWaterlineWorldPosition;`,
+        )
+        .replace(
+          '#include <project_vertex>',
+          `#include <project_vertex>
+          vWaterlineWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          uniform float uWaterHeight;
+          varying vec3 vWaterlineWorldPosition;`,
+        )
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          float waterlineWetness = smoothstep(
+            uWaterHeight + 0.42,
+            uWaterHeight + 0.04,
+            vWaterlineWorldPosition.y
+          );
+          diffuseColor.rgb *= mix(vec3(1.0), vec3(0.52, 0.60, 0.62), waterlineWetness * 0.58);`,
+        )
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `#include <roughnessmap_fragment>
+          roughnessFactor = mix(roughnessFactor, roughnessFactor * 0.22, waterlineWetness);`,
+        );
+    };
+    material.customProgramCacheKey = () => 'raft-waterline-wetness';
     return material;
   }
 }
