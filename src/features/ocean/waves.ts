@@ -53,7 +53,6 @@ export const OCEAN_GRAVITY = 9.81;
 export const OCEAN_STEEPNESS = 0.82;
 
 const TWO_PI = Math.PI * 2;
-const OCEAN_WAVE_COUNT = 8;
 const NEWTON_ITERATIONS = 5;
 const NEWTON_EPSILON = 1e-8;
 
@@ -80,15 +79,27 @@ function createWave(
 }
 
 export const OCEAN_WAVES: readonly WaveComponent[] = [
-  createWave(0.9701425, 0.2425356, 0.42, 26, 0.0),
-  createWave(0.4718579, 0.8816745, 0.24, 13, 1.7),
-  createWave(-0.8, 0.6, 0.14, 6.8, 3.1),
-  createWave(0.2, -0.98, 0.085, 4.1, -0.9),
-  createWave(-0.9353294, -0.3537814, 0.05, 2.6, 2.2),
-  createWave(0.702713, -0.711473, 0.028, 1.7, -1.5),
-  createWave(0.39, 0.92, 0.019, 1.15, 0.4),
-  createWave(-0.72, 0.69, 0.013, 0.88, -2.2),
+  // A dominant wind-sea band carries most of the energy; its oblique medium
+  // swell supplies cross-chop. Wavelength gaps are deliberately uneven so
+  // the field does not tile into a regular ridge grid at camera distance.
+  createWave(0.9701425, 0.2425356, 0.37, 31.0, 2.6),
+  createWave(0.5630000, 0.8260000, 0.24, 14.5, -1.68),
+  createWave(0.9068790, 0.4213911, 0.15, 12.7, 2.75),
+  createWave(0.9769718, -0.2133683, 0.10, 8.4, 0.15),
+  createWave(0.7869300, 0.6170423, 0.07, 5.7, -2.2),
+  createWave(0.9068611, -0.4214298, 0.048, 3.9, 1.3),
+  // A quieter, asymmetric cross-chop tail breaks up long parallel facets.
+  createWave(0.3947701, 0.9187799, 0.032, 2.55, -0.85),
+  createWave(0.6255022, -0.7802224, 0.021, 1.75, 2.1),
+  createWave(-0.0641383, 0.9979410, 0.014, 1.18, -2.75),
+  createWave(0.0157743, -0.9998756, 0.009, 0.79, 0.65),
+  createWave(-0.6242588, 0.7812176, 0.006, 0.53, -1.1),
+  createWave(-0.5925534, -0.8055312, 0.004, 0.34, 2.9),
 ];
+
+// This derived count is consumed by both the CPU evaluator and generated
+// GLSL, so adding a component cannot silently change the no-loop budget.
+const OCEAN_WAVE_COUNT = OCEAN_WAVES.length;
 
 /** Upper bound used to normalize the signed curvature signal. */
 export const OCEAN_CURVATURE_SCALE = OCEAN_WAVES.reduce(
