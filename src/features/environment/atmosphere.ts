@@ -104,44 +104,64 @@ void main() {
     + betaM * MIE_ZENITH_LENGTH * (viewAirMass + sunAirMass)));
   float cosineToSun = dot(direction, sunDirection);
   float rayleigh = rayleighPhase(cosineToSun);
-  // Aerosol scattering stays directional, but is scaled to avoid a broad
-  // white patch when the host renderer is using its neutral tone mapper.
-  float mie = miePhase(cosineToSun) * 0.24;
+  // Aerosol scattering stays directional, but carries a wider forward haze
+  // so the sun reads through humid maritime air instead of as a lone pixel.
+  float mie = miePhase(cosineToSun) * 0.30;
   float sunEnergy = sunIntensity(sunZenithCosine);
   vec3 scattering = sunEnergy * (betaR * rayleigh + betaM * mie) / (betaR + betaM);
   vec3 inScattering = pow(max(scattering * (1.0 - extinction), vec3(0.0)), vec3(1.12));
 
   // A low, lightly hazed sun shifts the horizon toward warm sea-air blue;
   // the term is intentionally restrained so fog can remain the final depth cue.
-  float horizon = 1.0 - smoothstep(0.0, 0.34, max(direction.y, 0.0));
-  vec3 horizonAerialTint = mix(vec3(0.34, 0.51, 0.57), vec3(0.64, 0.53, 0.39),
+  float altitude = max(direction.y, 0.0);
+  float horizon = 1.0 - smoothstep(0.0, 0.34, altitude);
+  vec3 horizonAerialTint = mix(vec3(0.26, 0.44, 0.57), vec3(0.78, 0.55, 0.34),
     smoothstep(-0.02, 0.26, sunDirection.y));
-  vec3 skyColor = inScattering * 0.041;
-  skyColor += extinction * mix(vec3(0.010, 0.026, 0.052), horizonAerialTint * 0.12, horizon);
-  skyColor += horizonAerialTint * horizon * horizon * 0.055;
+  vec3 skyColor = inScattering * 0.052;
+  skyColor += extinction * mix(vec3(0.006, 0.018, 0.050), horizonAerialTint * 0.11, horizon);
+  skyColor += extinction * vec3(0.000, 0.005, 0.024) * smoothstep(0.08, 0.92, altitude);
+  skyColor += horizonAerialTint * horizon * horizon * 0.064;
 
-  // Two correlated, four-octave cloud fields give broad bodies and small
-  // structure without a texture lookup or an unbounded ray-march.
-  vec2 cloudCoordinates = vec2(atan(direction.z, direction.x) * 0.72, direction.y * 3.9);
-  float cloudFar = cloudNoise(cloudCoordinates * 1.72 + vec2(2.4, -0.7));
-  float cloudNear = cloudNoise(cloudCoordinates * 5.1 - vec2(4.8, 1.9));
-  float cloudEnvelope = smoothstep(0.055, 0.17, max(direction.y, 0.0))
-    * (1.0 - smoothstep(0.68, 0.91, max(direction.y, 0.0)));
-  float cloudBody = smoothstep(0.43, 0.70, cloudFar);
-  float cloudDetail = smoothstep(0.47, 0.77, cloudNear);
-  float cloudDensity = clamp(mix(cloudBody, cloudDetail, 0.30) * cloudEnvelope, 0.0, 1.0);
+  // Two correlated, four-octave cloud fields give broad maritime bodies,
+  // higher stratocumulus, and small structure without a texture lookup or
+  // an unbounded ray-march.  The overlapping envelopes avoid a flat stripe.
+  float cloudAzimuth = atan(direction.z, direction.x);
+  vec2 cloudCoordinates = vec2(
+    cloudAzimuth * 1.85 + altitude * 0.70
+      + sin(altitude * 13.0 + cloudAzimuth * 2.4) * 0.24,
+    altitude * 6.8 + sin(cloudAzimuth * 2.8 + altitude * 4.0) * 0.34
+  );
+  float cloudFar = cloudNoise(cloudCoordinates * 0.92 + vec2(2.4, -0.7));
+  float cloudNear = cloudNoise(cloudCoordinates * 2.70 - vec2(4.8, 1.9));
+  float lowCloudEnvelope = smoothstep(0.025, 0.16, altitude)
+    * (1.0 - smoothstep(0.46, 0.68, altitude));
+  float highCloudEnvelope = smoothstep(0.23, 0.39, altitude)
+    * (1.0 - smoothstep(0.83, 0.985, altitude));
+  float cloudBody = smoothstep(0.31, 0.57, cloudFar + (cloudNear - 0.5) * 0.22);
+  float cloudDetail = smoothstep(0.36, 0.70, cloudNear);
+  float lowCloud = cloudBody * lowCloudEnvelope;
+  float highCloud = smoothstep(0.36, 0.61, mix(cloudFar, cloudNear, 0.34))
+    * highCloudEnvelope;
+  float cloudDensity = clamp(lowCloud * 0.92 + highCloud * 0.80
+    + lowCloud * highCloud * 0.20, 0.0, 1.0);
+  cloudDensity = clamp(cloudDensity + cloudDetail * (lowCloudEnvelope * 0.24
+    + highCloudEnvelope * 0.20), 0.0, 1.0);
   vec2 sunCloudOffset = normalize(sunDirection.xz + vec2(0.0001)) * 0.19;
-  float cloudShadowNoise = noise2(cloudCoordinates * 3.25 - sunCloudOffset * 2.4 + vec2(7.1, -3.6));
-  float cloudSelfShadow = smoothstep(0.34, 0.70, cloudShadowNoise);
+  float cloudShadowNoise = noise2(cloudCoordinates * 2.65 - sunCloudOffset * 2.4 + vec2(7.1, -3.6));
+  float cloudSelfShadow = smoothstep(0.25, 0.72, cloudShadowNoise);
   float sunFacingCloud = clamp(dot(direction, sunDirection) * 0.5 + 0.5, 0.0, 1.0);
-  float cloudLight = mix(0.30, 0.92, sunFacingCloud) * mix(0.58, 1.0, cloudSelfShadow);
-  vec3 cloudShadowColor = vec3(0.26, 0.31, 0.33);
-  vec3 cloudSunColor = vec3(0.94, 0.86, 0.72);
+  float cloudLight = mix(0.18, 0.98, sunFacingCloud) * mix(0.40, 1.0, cloudSelfShadow);
+  float cloudInterior = smoothstep(0.32, 0.78, cloudDensity);
+  float cloudEdge = smoothstep(0.08, 0.30, cloudDensity)
+    * (1.0 - smoothstep(0.48, 0.82, cloudDensity));
+  vec3 cloudShadowColor = vec3(0.09, 0.13, 0.17);
+  vec3 cloudSunColor = vec3(1.02, 0.93, 0.77);
   vec3 cloudColor = mix(cloudShadowColor, cloudSunColor, cloudLight);
-  skyColor = mix(skyColor, cloudColor, cloudDensity * 0.68);
-  float cloudEdge = smoothstep(0.08, 0.36, cloudDensity)
-    * (1.0 - smoothstep(0.36, 0.78, cloudDensity));
-  float silverLining = pow(max(cosineToSun, 0.0), 20.0) * cloudEdge * 0.14;
+  cloudColor = mix(cloudColor, cloudShadowColor * 0.76, cloudInterior * 0.36);
+  cloudColor += cloudSunColor * cloudEdge * cloudLight * 0.16;
+  skyColor = mix(skyColor, cloudColor, cloudDensity * 0.92);
+  float silverLining = (pow(max(cosineToSun, 0.0), 10.0) * 0.040
+    + pow(max(cosineToSun, 0.0), 24.0) * 0.095) * cloudEdge;
   skyColor += vec3(1.0, 0.82, 0.58) * silverLining;
 
   // 0.53 degree apparent solar diameter (0.265 degree radius), with a
@@ -149,12 +169,13 @@ void main() {
   const float SUN_DISC_EDGE_COS = 0.9999850;
   const float SUN_DISC_FULL_COS = 0.9999930;
   float sunDisc = smoothstep(SUN_DISC_EDGE_COS, SUN_DISC_FULL_COS, cosineToSun);
-  float sunHalo = pow(max(cosineToSun, 0.0), 18.0) * 0.008
-    + pow(max(cosineToSun, 0.0), 64.0) * 0.024
-    + pow(max(cosineToSun, 0.0), 180.0) * 0.052;
-  float discVisibility = 1.0 - cloudDensity * 0.78;
-  skyColor += vec3(1.0, 0.53, 0.20) * sunHalo * discVisibility;
-  skyColor += vec3(8.0, 4.4, 1.45) * sunDisc * discVisibility;
+  float sunHalo = pow(max(cosineToSun, 0.0), 4.0) * 0.024
+    + pow(max(cosineToSun, 0.0), 12.0) * 0.060
+    + pow(max(cosineToSun, 0.0), 36.0) * 0.105
+    + pow(max(cosineToSun, 0.0), 96.0) * 0.070;
+  float sunVisibility = mix(1.0, 0.48 + cloudLight * 0.52, cloudDensity);
+  skyColor += vec3(1.0, 0.59, 0.28) * sunHalo * sunVisibility;
+  skyColor += vec3(8.0, 4.4, 1.45) * sunDisc * sunVisibility;
 
   // Keep the shader in linear-sRGB scene space; Three.js applies the active
   // renderer tone mapper and final sRGB transform through these chunks.
@@ -370,7 +391,7 @@ export function createMarineEnvironment(
   sky.renderOrder = -100;
   root.add(sky);
 
-  const sun = new THREE.DirectionalLight(0xffd8b5, 2.85);
+  const sun = new THREE.DirectionalLight(0xffd8b5, 3.05);
   sun.position.copy(normalizedSunDirection).multiplyScalar(180);
   sun.target.position.set(0, 0, -40);
   sun.castShadow = true;
@@ -388,7 +409,7 @@ export function createMarineEnvironment(
   root.add(sun.target);
   root.add(sun);
 
-  const hemisphere = new THREE.HemisphereLight(0x8dbdce, 0x16282d, 0.82);
+  const hemisphere = new THREE.HemisphereLight(0x8dbdce, 0x16282d, 1.05);
   root.add(hemisphere);
 
   // Destination positions intentionally remain unchanged from OCE-005.
