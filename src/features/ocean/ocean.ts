@@ -165,11 +165,9 @@ void main() {
     * smoothstep(1.0, 0.96, reflUv.x)
     * smoothstep(0.0, 0.04, reflUv.y)
     * smoothstep(1.0, 0.96, reflUv.y);
-  vec3 reflected = mix(
-    envSky,
-    texture2D(tReflection, clamp(reflUv, 0.0, 1.0)).rgb,
-    planarValid
-  );
+  vec3 planar = texture2D(tReflection, clamp(reflUv, 0.0, 1.0)).rgb;
+  float planarPresent = step(0.02, max(max(planar.r, planar.g), planar.b));
+  vec3 reflected = mix(envSky, planar, planarValid * planarPresent);
 
   // Use the wave height as a depth proxy for a finite water column: troughs
   // read denser and bluer while crests receive more transmitted sky color.
@@ -397,30 +395,25 @@ function updatePlanarReflection(
   const currentRenderTarget = renderer.getRenderTarget();
   const currentXrEnabled = renderer.xr.enabled;
   const currentShadowAutoUpdate = renderer.shadowMap.autoUpdate;
+  const currentToneMapping = renderer.toneMapping;
+  const currentOutputColorSpace = renderer.outputColorSpace;
   oceanMesh.visible = false;
   renderer.xr.enabled = false;
   renderer.shadowMap.autoUpdate = false;
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
   renderer.setRenderTarget(renderTarget);
   renderer.state.buffers.depth.setMask(true);
-  const culled: THREE.Object3D[] = [];
-  scene.traverse((object) => {
-    if (object.frustumCulled) {
-      culled.push(object);
-      object.frustumCulled = false;
-    }
-  });
-  try {
+  if (renderer.autoClear === false) {
     renderer.clear();
-    renderer.render(scene, reflectionCamera);
-  } finally {
-    for (const object of culled) {
-      object.frustumCulled = true;
-    }
-    oceanMesh.visible = true;
-    renderer.xr.enabled = currentXrEnabled;
-    renderer.shadowMap.autoUpdate = currentShadowAutoUpdate;
-    renderer.setRenderTarget(currentRenderTarget);
   }
+  renderer.render(scene, reflectionCamera);
+  oceanMesh.visible = true;
+  renderer.xr.enabled = currentXrEnabled;
+  renderer.shadowMap.autoUpdate = currentShadowAutoUpdate;
+  renderer.toneMapping = currentToneMapping;
+  renderer.outputColorSpace = currentOutputColorSpace;
+  renderer.setRenderTarget(currentRenderTarget);
 
   const viewport = (perspectiveCamera as THREE.PerspectiveCamera & {
     viewport?: THREE.Vector4;
@@ -541,23 +534,28 @@ export function createOceanFeature(): RuntimeFeature {
         oceanMesh.name = 'animated-ocean-surface';
         oceanMesh.rotation.x = -Math.PI / 2;
         oceanMesh.frustumCulled = false;
-        const reflectionMesh = oceanMesh;
-        reflectionMesh.onBeforeRender = (renderer, renderScene, camera) => {
-          if (!oceanUniforms || !reflectTarget || !reflectionCamera) {
-            return;
-          }
-          updatePlanarReflection(
-            renderer,
-            renderScene,
-            camera,
-            reflectionMesh,
-            reflectionCamera,
-            reflectTarget,
-            oceanUniforms.uReflectionMatrix.value,
-          );
-        };
         root.add(oceanMesh);
         scene.add(root);
+        let renderingReflection = false;
+        scene.onBeforeRender = (renderer, renderScene, camera) => {
+          if (renderingReflection || !oceanMesh || !oceanUniforms || !reflectTarget || !reflectionCamera) {
+            return;
+          }
+          renderingReflection = true;
+          try {
+            updatePlanarReflection(
+              renderer,
+              renderScene,
+              camera,
+              oceanMesh,
+              reflectionCamera,
+              reflectTarget,
+              oceanUniforms.uReflectionMatrix.value,
+            );
+          } finally {
+            renderingReflection = false;
+          }
+        };
 
         scene.background = new THREE.Color(0x315c6b);
         scene.fog = new THREE.FogExp2(0x5b8793, 0.0031);
@@ -582,6 +580,7 @@ export function createOceanFeature(): RuntimeFeature {
         reflectTarget = null;
         pmremTarget = null;
         reflectionCamera = null;
+        scene.onBeforeRender = () => undefined;
         oceanMesh = null;
         if (root) {
           scene.remove(root);
@@ -637,6 +636,9 @@ export function createOceanFeature(): RuntimeFeature {
       reflectTarget = null;
       pmremTarget = null;
       reflectionCamera = null;
+      if (scene) {
+        scene.onBeforeRender = () => undefined;
+      }
       if (oceanMesh) {
         oceanMesh.onBeforeRender = () => undefined;
       }
