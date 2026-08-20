@@ -2,7 +2,7 @@
 
 This is the coordinator-owned source of truth for implementation dispatches. A task marked `ready` is queued for a future worker; it is not active until the coordinator records a worker thread, branch, worktree, and base commit.
 
-`FND-001` is the only active implementation lane. All feature and QA lanes remain dependency-gated until its runtime contracts are reviewed and integrated.
+`FND-001` is integrated. `OCE-001`, `RAFT-001`, and `QA-001` are active in isolated worktrees from the same verified foundation base.
 
 Every implementation dispatch uses `gpt-5.6-luna` at `max` reasoning effort and contains exactly one lane plus the exclusive write scope recorded below.
 
@@ -16,10 +16,10 @@ Use `blocked` whenever a dependency or acceptance decision prevents dispatch. On
 
 | Task | Lane | State | Depends on | Worker | Branch / worktree | Exclusive worker write scope |
 | --- | --- | --- | --- | --- | --- | --- |
-| `FND-001` | `foundation` | `active` | None | `/root/foundation_fnd001` | `c1/foundation-bootstrap` / `/private/tmp/water-fnd001` / base `e207233` | `package.json`; `package-lock.json`; `index.html`; `vite.config.*`; `tsconfig*.json`; `src/main.*`; `src/runtime/**` |
-| `OCE-001` | `ocean-rendering` | `blocked` | `FND-001` integrated and its runtime contracts reviewed | Unassigned | `c1/ocean-rendering` / create after dependency | `src/features/ocean/**`; `src/features/environment/**`; `public/ocean/**`; `tests/ocean/**` |
-| `RAFT-001` | `raft-systems` | `blocked` | `FND-001` integrated and its runtime contracts reviewed | Unassigned | `c1/raft-systems` / create after dependency | `src/features/raft/**`; `public/raft/**`; `tests/raft/**` |
-| `QA-001` | `world-qa` | `blocked` | `FND-001` integrated; dev URL and browser runner agreed; required shared wiring serialized by coordinator | Standby: `01a01c90-b8ec-77d0-90e1-3457ea5ca0f7` | `c1/world-qa-smoke` / record exact worktree after dependency | `qa/**` |
+| `FND-001` | `foundation` | `integrated` | None | `/root/foundation_fnd001` | `c1/foundation-bootstrap` / `/private/tmp/water-fnd001` / base `e207233` | `package.json`; `package-lock.json`; `index.html`; `vite.config.*`; `tsconfig*.json`; `src/main.*`; `src/runtime/**` |
+| `OCE-001` | `ocean-rendering` | `active` | `FND-001` integrated and runtime contracts reviewed at `ccfc531` | `/root/ocean_oce001` | `c1/ocean-rendering` / `/private/tmp/water-oce001` / base `ccfc531` | `src/features/ocean/**`; `src/features/environment/**`; `public/ocean/**`; `tests/ocean/**` |
+| `RAFT-001` | `raft-systems` | `active` | `FND-001` integrated and runtime contracts reviewed at `ccfc531` | `/root/raft_raft001` | `c1/raft-systems` / `/private/tmp/water-raft001` / base `ccfc531` | `src/features/raft/**`; `public/raft/**`; `tests/raft/**` |
+| `QA-001` | `world-qa` | `active` | `FND-001` integrated; dev URL `http://127.0.0.1:5173`; Codex In-app Browser runner | `/root/qa_qa001` | `c1/world-qa-smoke` / `/private/tmp/water-qa001` / base `ccfc531` | `qa/**` |
 
 Paths not listed in a worker's row are out of scope. Dependency or shared-file changes are returned to the coordinator for a separate dispatch; workers do not widen their own scope.
 
@@ -72,6 +72,12 @@ Paths not listed in a worker's row are out of scope. Dependency or shared-file c
 
 Both standby bases predate this board. Before activation, the coordinator must create or refresh each isolated worktree from the then-current verified `main` and record the new base commit.
 
+## Active visual reference
+
+The accepted desktop gameplay concept is `/Users/jk/.codex/visualizations/2026/08/20/01a01c90-8bec-75d2-93f7-b299a7f64d01/water-gameplay-concept.png`. Lane-ready texture sources are stored beside it as `ocean-foam-breakup.png`, `raft-wood-albedo.png`, and `raft-sail-albedo.png`. Workers may copy only their lane's assigned assets into their exclusive `public/**` scope.
+
+The visual target is a full-viewport, third-person raft scene with a high marine horizon, deep teal waves, foam wake, layered pale sky, distant islands/lighthouse, weathered wood and canvas, and sparse white navigation HUD. Allowed visible HUD copy is `WATER`, `W`, `N`, `E`, `WIND 12 KN`, `WASD STEER`, `DRAG LOOK`, `6.4 KN`, `SAIL`, and `72%`.
+
 ## Shared and coordinator-owned paths
 
 The coordinator owns `AGENTS.md`, `ORCHESTRATOR.md`, `DISPATCH.md`, `.orchestration.json`, `README.md`, integration composition after `FND-001`, and shared manifest/configuration edits after `FND-001`. A worker that needs one of these paths must stop and request a separately recorded scope change.
@@ -98,4 +104,7 @@ At handoff, record:
 
 | Task | Base commit | Worker commit | Diff review | Validation run | Main merge | Risks / follow-up |
 | --- | --- | --- | --- | --- | --- | --- |
-| `FND-001` | `e207233` | _Active_ | _Pending handoff_ | _Pending handoff_ | _Not merged_ | Exclusive foundation scope enforced. |
+| `FND-001` | `e207233` | `eae02dd`, `804a3b4` | Scope and full diff reviewed; deprecated Clock warning returned and fixed | `npm ci`; typecheck; build; initial browser canvas boot; Timer source/direct smoke | `ccfc531` | Integrated locally; expected Three.js bundle-size warning remains. |
+| `OCE-001` | `ccfc531` | _Active_ | _Pending handoff_ | _Pending handoff_ | _Not merged_ | Owns `ocean.surface.v1` service and ocean/environment asset paths. |
+| `RAFT-001` | `ccfc531` | _Active_ | _Pending handoff_ | _Pending handoff_ | _Not merged_ | Requires `ocean.surface.v1`; owns raft, controls, camera, wake, and HUD. |
+| `QA-001` | `ccfc531` | _Active_ | _Pending handoff_ | _Pending handoff_ | _Not merged_ | Dependency-free smoke artifacts only; performance budgets remain deferred. |
