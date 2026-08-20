@@ -402,12 +402,25 @@ function updatePlanarReflection(
   renderer.shadowMap.autoUpdate = false;
   renderer.setRenderTarget(renderTarget);
   renderer.state.buffers.depth.setMask(true);
-  renderer.clear();
-  renderer.render(scene, reflectionCamera);
-  oceanMesh.visible = true;
-  renderer.xr.enabled = currentXrEnabled;
-  renderer.shadowMap.autoUpdate = currentShadowAutoUpdate;
-  renderer.setRenderTarget(currentRenderTarget);
+  const culled: THREE.Object3D[] = [];
+  scene.traverse((object) => {
+    if (object.frustumCulled) {
+      culled.push(object);
+      object.frustumCulled = false;
+    }
+  });
+  try {
+    renderer.clear();
+    renderer.render(scene, reflectionCamera);
+  } finally {
+    for (const object of culled) {
+      object.frustumCulled = true;
+    }
+    oceanMesh.visible = true;
+    renderer.xr.enabled = currentXrEnabled;
+    renderer.shadowMap.autoUpdate = currentShadowAutoUpdate;
+    renderer.setRenderTarget(currentRenderTarget);
+  }
 
   const viewport = (perspectiveCamera as THREE.PerspectiveCamera & {
     viewport?: THREE.Vector4;
