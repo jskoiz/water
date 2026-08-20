@@ -518,8 +518,6 @@ class RaftController {
 
         #include <common>
         #include <fog_pars_fragment>
-        #include <tonemapping_pars_fragment>
-        #include <colorspace_pars_fragment>
 
         float hash12(vec2 point) {
           point = fract(point * vec2(123.34, 456.21));
