@@ -21,7 +21,6 @@ const OCEAN_SIZE = 480;
 const OCEAN_SEGMENTS = 240;
 const FOAM_TEXTURE_PATH = '/ocean/foam-breakup.png';
 const OCEAN_WAVE_SHADER_SOURCE = createOceanWaveShaderSource();
-const REFLECT_CLIP_BIAS = 0.003;
 const REFLECT_DISTORTION = 0.08;
 const REFLECT_DESKTOP_EDGE = 1024;
 const REFLECT_MOBILE_EDGE = 512;
@@ -296,16 +295,13 @@ interface OceanUniforms {
   envMap: { value: THREE.Texture | null };
 }
 
-const _reflectorPlane = new THREE.Plane();
 const _reflectorNormal = new THREE.Vector3(0, 1, 0);
 const _reflectorWorldPosition = new THREE.Vector3(0, OCEAN_SURFACE_LEVEL, 0);
 const _cameraWorldPosition = new THREE.Vector3();
 const _rotationMatrix = new THREE.Matrix4();
 const _lookAtPosition = new THREE.Vector3();
-const _clipPlane = new THREE.Vector4();
 const _view = new THREE.Vector3();
 const _target = new THREE.Vector3();
-const _q = new THREE.Vector4();
 
 function reflectionTextureSize(width: number, height: number): {
   width: number;
@@ -398,26 +394,6 @@ function updatePlanarReflection(
   textureMatrix.multiply(reflectionCamera.projectionMatrix);
   textureMatrix.multiply(reflectionCamera.matrixWorldInverse);
 
-  _reflectorPlane.setFromNormalAndCoplanarPoint(_reflectorNormal, _reflectorWorldPosition);
-  _reflectorPlane.applyMatrix4(reflectionCamera.matrixWorldInverse);
-  _clipPlane.set(
-    _reflectorPlane.normal.x,
-    _reflectorPlane.normal.y,
-    _reflectorPlane.normal.z,
-    _reflectorPlane.constant,
-  );
-
-  const projectionMatrix = reflectionCamera.projectionMatrix;
-  _q.x = (Math.sign(_clipPlane.x) + projectionMatrix.elements[8]) / projectionMatrix.elements[0];
-  _q.y = (Math.sign(_clipPlane.y) + projectionMatrix.elements[9]) / projectionMatrix.elements[5];
-  _q.z = -1.0;
-  _q.w = (1.0 + projectionMatrix.elements[10]) / projectionMatrix.elements[14];
-  _clipPlane.multiplyScalar(2.0 / _clipPlane.dot(_q));
-  projectionMatrix.elements[2] = _clipPlane.x;
-  projectionMatrix.elements[6] = _clipPlane.y;
-  projectionMatrix.elements[10] = _clipPlane.z + 1.0 - REFLECT_CLIP_BIAS;
-  projectionMatrix.elements[14] = _clipPlane.w;
-
   const currentRenderTarget = renderer.getRenderTarget();
   const currentXrEnabled = renderer.xr.enabled;
   const currentShadowAutoUpdate = renderer.shadowMap.autoUpdate;
@@ -426,9 +402,7 @@ function updatePlanarReflection(
   renderer.shadowMap.autoUpdate = false;
   renderer.setRenderTarget(renderTarget);
   renderer.state.buffers.depth.setMask(true);
-  if (renderer.autoClear === false) {
-    renderer.clear();
-  }
+  renderer.clear();
   renderer.render(scene, reflectionCamera);
   oceanMesh.visible = true;
   renderer.xr.enabled = currentXrEnabled;
