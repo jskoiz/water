@@ -30,6 +30,7 @@ Use `blocked` whenever a dependency or acceptance decision prevents dispatch. On
 | `RAFT-002` | `raft-systems` | `integrated` | Repaired runtime screenshot comparison at `055184c` | `/root/raft_raft002` | `c1/raft-visual-polish` / `/Users/jk/Desktop/water/.worktrees/raft002` / base `055184c` | `src/features/raft/**` |
 | `RAFT-003` | `raft-systems` | `integrated` | Second screenshot clipped deck/hull below viewport | `/root/raft_raft003` | `c1/raft-framing-fix` / `/Users/jk/Desktop/water/.worktrees/raft003` / base `3e7bfb7` | `src/features/raft/raft.ts` |
 | `RAFT-004` | `raft-systems` | `integrated` | Accepted baseline `d90be9d`; marine-response research complete | `/root/raft_raft004` | `c1/raft-physical-response` / `/Users/jk/Desktop/water/.worktrees/raft004` / base `d90be9d` | `src/features/raft/raft.ts` |
+| `RAFT-005` | `raft-systems` | `active` | Integrated `RAFT-004` frame showed geometric wake wedges | `/root/raft_raft004` | `c1/raft-wake-optical-tuning` / `/Users/jk/Desktop/water/.worktrees/raft005` / base `a48a091` | `src/features/raft/raft.ts` |
 | `QA-001` | `world-qa` | `integrated` | `FND-001` integrated; dev URL `http://127.0.0.1:5173`; Codex In-app Browser runner | `/root/qa_qa001` | `c1/world-qa-smoke` / `/private/tmp/water-qa001` / base `ccfc531` | `qa/**` |
 
 Paths not listed in a worker's row are out of scope. Dependency or shared-file changes are returned to the coordinator for a separate dispatch; workers do not widen their own scope.
@@ -98,6 +99,12 @@ Paths not listed in a worker's row are out of scope. Dependency or shared-file c
 - Preserve `ocean.surface.v1`, controls, HUD, camera, assets, disposal, and responsive framing.
 - Make wake and spray react to speed and vertical impact, and make raft materials/meshes ready for coordinator-enabled shadows.
 
+### RAFT-005 — integrated wake optical repair
+
+- Retain the verified second-order raft motion, nine-point contact sampling, controls, framing, service boundary, and lifecycle from `RAFT-004`.
+- Replace broad translucent wake wedges and rectangular impact shapes with narrow, broken, dissipating turbulent trails whose color and opacity remain restrained under ACES.
+- Preserve mobile stability and include Three.js tone-mapping/color-space output integration for any custom scene-color shader.
+
 ## Dependency and lockfile policy
 
 - Foundation uses npm and commits exactly one `package-lock.json`; no alternate lockfile is allowed.
@@ -154,7 +161,7 @@ The coordinator owns `AGENTS.md`, `ORCHESTRATOR.md`, `DISPATCH.md`, `.orchestrat
 5. Re-run `QA-001` after both feature lanes and coordinator-owned composition are integrated. Treat its browser evidence, and any separately agreed visual/performance criteria, as the merge-readiness gate for the first complete slice.
 6. For the physical-water round, review `OCE-006`, `ENV-001`, and `RAFT-004` independently, merge only passing scoped diffs, then serialize renderer tone-mapping/shadow integration on `main`.
 7. Re-run full build, HTTP smoke, desktop/mobile Browser QA, interaction proof, console review, and native-concept screenshot comparison. Dispatch narrow repair lanes for any material defect.
-8. Review `OCE-007` and `ENV-002` independently, merge only passing one-file diffs, and repeat the complete integrated visual gate from a fresh reload.
+8. Review `OCE-007`, `ENV-002`, and `RAFT-005` independently, merge only passing one-file diffs, and repeat the complete integrated visual gate from a fresh reload.
 
 ## Dispatch record template
 
@@ -184,4 +191,5 @@ At handoff, record:
 | `RAFT-002` | `055184c` | `5dec595` | Scope/diff and resource lifecycle reviewed | Worker and coordinator: typecheck/build; focused assertions | `0b8f5c8` | Wake/material/HUD improved; second screenshot found camera over-zoomed. |
 | `RAFT-003` | `3e7bfb7` | `0fb8141` | Exact raft-only diff reviewed; existing target and drag-look controls preserved | Worker and coordinator: typecheck/build/diff check; worker 1586x992 mast/hull framing assertion | `ca882e9` | Final desktop screenshot accepted the complete raft framing. |
 | `RAFT-004` | `d90be9d` | `4738043` | Exact one-file scope and full spring/contact/wake/lifecycle diff reviewed | Worker and coordinator: typecheck; build; diff check; worker numerical bounds and desktop/mobile browser | `ca4b6cb` | Integrated locally; remains a bounded reduced-order marine model rather than a full fluid solver. |
+| `RAFT-005` | `a48a091` | _Active_ | One-file wake/material repair dispatched from the rejected integrated frame | _Pending handoff_ | _Not merged_ | Turbulent wake geometry, impact breakup, and scene-color output integration only. |
 | `QA-001` | `ccfc531` | `ea7d849` | Full scope/diff review passed; seven Water markers defaulted | Worker and coordinator: syntax/import checks; HTTP smoke; desktop/mobile In-app Browser evidence; input and resize | `e200361` | Final functional and visual smoke passed; performance budgets remain intentionally deferred. |
