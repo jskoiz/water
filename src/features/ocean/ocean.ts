@@ -20,8 +20,6 @@ const OCEAN_SIZE = 480;
 const OCEAN_SEGMENTS = 240;
 const FOAM_TEXTURE_PATH = '/ocean/foam-breakup.png';
 const OCEAN_WAVE_SHADER_SOURCE = createOceanWaveShaderSource();
-const SCENE_DESKTOP_EDGE = 1024;
-const SCENE_MOBILE_EDGE = 512;
 
 const OCEAN_VERTEX_SHADER = /* glsl */ `
 ${OCEAN_WAVE_SHADER_SOURCE}
@@ -127,7 +125,7 @@ vec4 marchSceneReflection(vec3 origin, vec3 direction) {
     if (diff > 0.0 && diff < 6.0 && sceneEye < uCameraFar * 0.97) {
       float t = prevDiff < 0.0 ? 1.0 : (-prevDiff / (diff - prevDiff));
       vec2 hitUv = mix(prevUv, uv, clamp(t, 0.0, 1.0));
-      vec2 edge = smoothstep(0.0, 0.14, hitUv) * smoothstep(0.0, 0.14, 1.0 - hitUv);
+      vec2 edge = smoothstep(vec2(0.0), vec2(0.14), hitUv) * smoothstep(vec2(0.0), vec2(0.14), 1.0 - hitUv);
       float confidence = edge.x * edge.y * (1.0 - float(i) / float(SSR_STEPS) * 0.4);
       return vec4(texture2D(uSceneColor, hitUv).rgb, confidence);
     }
@@ -318,12 +316,14 @@ interface OceanUniforms {
   envMap: { value: THREE.Texture | null };
 }
 
-function sceneTextureSize(width: number, height: number): {
+function sceneTextureSize(width: number, height: number, pixelRatio = 1): {
   width: number;
   height: number;
 } {
-  const edge = Math.min(width, height) <= 500 ? SCENE_MOBILE_EDGE : SCENE_DESKTOP_EDGE;
-  return { width: edge, height: edge };
+  return {
+    width: Math.max(1, Math.floor(width * pixelRatio)),
+    height: Math.max(1, Math.floor(height * pixelRatio)),
+  };
 }
 
 function createSceneTarget(width: number, height: number): THREE.WebGLRenderTarget {
@@ -407,6 +407,8 @@ export function createOceanFeature(): RuntimeFeature {
   let pmremTarget: THREE.WebGLRenderTarget | null = null;
   let lastPmremSun = new THREE.Vector3();
   let disposed = false;
+  let renderer: THREE.WebGLRenderer | null = null;
+  let previousOnShaderError: THREE.WebGLRenderer['debug']['onShaderError'];
 
   const rebuildSkyPmrem = (
     renderer: THREE.WebGLRenderer,
@@ -454,6 +456,15 @@ export function createOceanFeature(): RuntimeFeature {
         overrideMaterial: scene.overrideMaterial,
       };
 
+      renderer = context.renderer;
+      previousOnShaderError = renderer.debug.onShaderError;
+      renderer.debug.onShaderError = (gl, program, glVertexShader, glFragmentShader) => {
+        const vsLog = gl.getShaderInfoLog(glVertexShader);
+        const fsLog = gl.getShaderInfoLog(glFragmentShader);
+        console.error('[ocean] shader error', vsLog, fsLog);
+        previousOnShaderError?.(gl, program, glVertexShader, glFragmentShader);
+      };
+
       context.loading.update('Loading ocean foam…');
       try {
         activeFoamTexture = await loadRequiredFoamTexture();
@@ -471,6 +482,7 @@ export function createOceanFeature(): RuntimeFeature {
         const size = sceneTextureSize(
           context.viewport.width,
           context.viewport.height,
+          context.viewport.pixelRatio,
         );
         sceneTarget = createSceneTarget(size.width, size.height);
         oceanUniforms = {
@@ -588,6 +600,7 @@ export function createOceanFeature(): RuntimeFeature {
       const size = sceneTextureSize(
         context.viewport.width,
         context.viewport.height,
+        context.viewport.pixelRatio,
       );
       if (sceneTarget.width !== size.width || sceneTarget.height !== size.height) {
         sceneTarget.setSize(size.width, size.height);
@@ -597,6 +610,10 @@ export function createOceanFeature(): RuntimeFeature {
 
     dispose(): void {
       disposed = true;
+      if (renderer) {
+        renderer.debug.onShaderError = previousOnShaderError;
+        renderer = null;
+      }
       unregisterService?.();
       unregisterService = null;
 
