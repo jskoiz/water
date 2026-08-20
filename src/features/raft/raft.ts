@@ -488,7 +488,11 @@ class RaftController {
       uStrength: { value: 0 },
     };
     const wakeMaterial = this.registerMaterial(new THREE.ShaderMaterial({
-      uniforms: wakeUniforms,
+      uniforms: {
+        ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
+        ...wakeUniforms,
+      },
+      toneMapped: true,
       vertexShader: /* glsl */ `
         attribute float aAlpha;
         varying float vAlpha;
