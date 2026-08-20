@@ -2,7 +2,7 @@
 
 This is the coordinator-owned source of truth for implementation dispatches. A task marked `ready` is queued for a future worker; it is not active until the coordinator records a worker thread, branch, worktree, and base commit.
 
-Foundation, first-pass features, QA, fog repair, first visual-polish lanes, and the second screenshot's narrow horizon-scale and camera-framing corrections are integrated. The three research-backed physical-water lanes from clean baseline `d90be9d` are integrated. Native-frame comparison then opened two disjoint optical/atmospheric repair lanes from the integrated build.
+Foundation, first-pass features, QA, fog repair, first visual-polish lanes, and the second screenshot's narrow horizon-scale and camera-framing corrections are integrated. The three research-backed physical-water lanes from clean baseline `d90be9d` are integrated. Native-frame comparison then opened disjoint optical, atmosphere, wake, and spectrum repair lanes from successive integrated builds.
 
 Every implementation dispatch uses `gpt-5.6-luna` at `max` reasoning effort and contains exactly one lane plus the exclusive write scope recorded below.
 
@@ -23,7 +23,8 @@ Use `blocked` whenever a dependency or acceptance decision prevents dispatch. On
 | `OCE-004` | `ocean-rendering` | `integrated` | Repaired runtime screenshot comparison at `055184c` | `/root/ocean_oce004` | `c1/ocean-visual-polish` / `/Users/jk/Desktop/water/.worktrees/oce004` / base `055184c` | `src/features/ocean/**`; `src/features/environment/**` |
 | `OCE-005` | `ocean-rendering` | `integrated` | Second screenshot showed foreground-sized destination | `/root/ocean_oce005` | `c1/horizon-scale-fix` / `/Users/jk/Desktop/water/.worktrees/oce005` / base `3e7bfb7` | `src/features/environment/atmosphere.ts` |
 | `OCE-006` | `ocean-rendering` | `integrated` | Accepted baseline `d90be9d`; physical-water research complete | `/root/ocean_oce006` | `c1/ocean-physical-water` / `/Users/jk/Desktop/water/.worktrees/oce006` / base `d90be9d` | `src/features/ocean/waves.ts`; `src/features/ocean/ocean.ts`; optional `tests/ocean/**` |
-| `OCE-007` | `ocean-rendering` | `active` | Integrated `OCE-006` frame showed broad chalky foam/reflection | `/root/ocean_oce006` | `c1/ocean-optical-tuning` / `/Users/jk/Desktop/water/.worktrees/oce007` / base `90ee59d` | `src/features/ocean/ocean.ts` |
+| `OCE-007` | `ocean-rendering` | `integrated` | Integrated `OCE-006` frame showed broad chalky foam/reflection | `/root/ocean_oce006` | `c1/ocean-optical-tuning` / `/Users/jk/Desktop/water/.worktrees/oce007` / base `90ee59d` | `src/features/ocean/ocean.ts` |
+| `OCE-008` | `ocean-rendering` | `active` | Integrated `OCE-007` frame showed a regular rolling-ridge spectrum | `/root/ocean_oce006` | `c1/ocean-spectrum-tuning` / `/Users/jk/Desktop/water/.worktrees/oce008` / base `10ac13a` | `src/features/ocean/waves.ts`; `tests/ocean/waves.test.ts` |
 | `ENV-001` | `ocean-rendering` | `integrated` | Accepted baseline `d90be9d`; atmosphere research complete | `/root/environment_env001` | `c1/environment-physical-light` / `/Users/jk/Desktop/water/.worktrees/env001` / base `d90be9d` | `src/features/environment/atmosphere.ts` |
 | `ENV-002` | `ocean-rendering` | `active` | Integrated `ENV-001` frame showed a sparse, flat cloud field | `/root/environment_env001` | `c1/environment-visual-tuning` / `/Users/jk/Desktop/water/.worktrees/env002` / base `79cec93` | `src/features/environment/atmosphere.ts` |
 | `RAFT-001` | `raft-systems` | `integrated` | `FND-001` integrated and runtime contracts reviewed at `ccfc531` | `/root/raft_raft001` | `c1/raft-systems` / `/private/tmp/water-raft001` / base `ccfc531` | `src/features/raft/**`; `public/raft/**`; `tests/raft/**` |
@@ -80,6 +81,12 @@ Paths not listed in a worker's row are out of scope. Dependency or shared-file c
 - Retain the verified Gerstner geometry, physical water IOR, service contract, and lifecycle from `OCE-006`.
 - Restrict foam to irregular compressed crests, deepen trough absorption, reduce chalky reflected saturation, and shape a restrained broken sun-glitter path.
 - Compare the native `1586x992` result directly with the accepted concept and the rejected `water-realism-interim.png` frame; the sea must not read as ice or a continuous snowfield.
+
+### OCE-008 — integrated wave-spectrum repair
+
+- Retain the verified deep-water dispersion, Gerstner/Newton implementation, no-loop budget, analytic normals, CPU/GPU source generation, and public sampler from `OCE-006`.
+- Replace the regular rolling-ridge pattern with a bounded, wind-coherent but directionally spread set of long, medium, and short components with non-uniform spacing and irregular crest silhouettes.
+- Extend focused spectrum invariants while keeping CPU/shader cost and mobile motion bounded.
 
 ### ENV-001 — physical atmosphere and scene lighting
 
@@ -161,7 +168,7 @@ The coordinator owns `AGENTS.md`, `ORCHESTRATOR.md`, `DISPATCH.md`, `.orchestrat
 5. Re-run `QA-001` after both feature lanes and coordinator-owned composition are integrated. Treat its browser evidence, and any separately agreed visual/performance criteria, as the merge-readiness gate for the first complete slice.
 6. For the physical-water round, review `OCE-006`, `ENV-001`, and `RAFT-004` independently, merge only passing scoped diffs, then serialize renderer tone-mapping/shadow integration on `main`.
 7. Re-run full build, HTTP smoke, desktop/mobile Browser QA, interaction proof, console review, and native-concept screenshot comparison. Dispatch narrow repair lanes for any material defect.
-8. Review `OCE-007`, `ENV-002`, and `RAFT-005` independently, merge only passing one-file diffs, and repeat the complete integrated visual gate from a fresh reload.
+8. Review `OCE-007`, `OCE-008`, `ENV-002`, and `RAFT-005` independently, merge only passing disjoint diffs, and repeat the complete integrated visual gate from a fresh reload.
 
 ## Dispatch record template
 
@@ -184,7 +191,8 @@ At handoff, record:
 | `OCE-004` | `055184c` | `9d91b4e` | Scope/diff and CPU/shader parity reviewed | Worker and coordinator: typecheck/build; worker browser desktop/mobile | `3e7bfb7` | Clouds/waves/glints improved; second screenshot found destination overscaled. |
 | `OCE-005` | `3e7bfb7` | `b96faba` | Exact atmosphere-only diff reviewed; destination association and all unrelated environment values preserved | Worker and coordinator: typecheck/build/diff check; worker projection assertions at 1586x992 | `40d9f6f` | Final desktop screenshot accepted the reduced horizon destination. |
 | `OCE-006` | `d90be9d` | `048df97` | Exact three-file scope and full CPU/GLSL/shader/lifecycle diff reviewed | Worker and coordinator: typecheck; build; five focused ocean tests; diff check; worker desktop/mobile browser | `90ee59d` | Integrated locally; native frame exposed excessive broad white foam/reflection, assigned to `OCE-007`. |
-| `OCE-007` | `90ee59d` | _Active_ | One-file optical repair dispatched from the rejected integrated frame | _Pending handoff_ | _Not merged_ | Foam sparsity, dark-water optical balance, and broken sun glitter only. |
+| `OCE-007` | `90ee59d` | `1cb1767` | Exact one-file fragment-optics diff reviewed; geometry, IOR, contracts, and lifecycle preserved | Worker and coordinator: typecheck; build; diff check; worker desktop/mobile fallback browser | `10ac13a` | Integrated locally; snowfield effect cleared, but regular ridge spacing remained and was assigned to `OCE-008`. |
+| `OCE-008` | `10ac13a` | _Active_ | Two-file-or-less spectrum/test repair dispatched from the integrated optical frame | _Pending handoff_ | _Not merged_ | Component distribution and focused invariants only; no shader-optics edits. |
 | `ENV-001` | `d90be9d` | `2e903ca` | Exact one-file scope and full sky/light/material/shadow diff reviewed | Worker and coordinator: typecheck; build; diff check; worker desktop/mobile browser | `79cec93` | Integrated locally; native frame exposed an overly sparse/flat cloud field, assigned to `ENV-002`. |
 | `ENV-002` | `79cec93` | _Active_ | One-file atmosphere repair dispatched from the rejected integrated frame | _Pending handoff_ | _Not merged_ | Cloud volume, sun/halo readability, and sky-depth balance only. |
 | `RAFT-001` | `ccfc531` | `d995cc3` | Full scope/diff and lifecycle review passed; asset hashes match | Worker and coordinator: typecheck/build; diff checks | `c6e6d52` | Live integration with `ocean.surface.v1` and browser proof remain. |
