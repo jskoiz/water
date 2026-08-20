@@ -50,22 +50,32 @@ float cloudNoise(vec2 point) {
 void main() {
   vec3 direction = normalize(vSkyDirection);
   float altitude = clamp(direction.y * 0.5 + 0.5, 0.0, 1.0);
-  vec3 horizonColor = vec3(0.54, 0.70, 0.72);
-  vec3 zenithColor = vec3(0.055, 0.17, 0.27);
+  vec3 horizonColor = vec3(0.36, 0.58, 0.65);
+  vec3 zenithColor = vec3(0.045, 0.15, 0.25);
   vec3 skyColor = mix(horizonColor, zenithColor, smoothstep(0.30, 0.90, altitude));
 
-  float cloudLayer = cloudNoise(direction.xz * 3.2 + vec2(direction.y * 1.8, direction.y * 0.8));
-  float cloudBand = smoothstep(0.48, 0.78, cloudLayer)
-    * smoothstep(0.03, 0.45, altitude)
-    * (1.0 - smoothstep(0.72, 0.98, altitude));
-  skyColor = mix(skyColor, vec3(0.77, 0.82, 0.80), cloudBand * 0.34);
+  vec2 cloudCoordinates = vec2(atan(direction.z, direction.x) * 0.75, direction.y * 3.6);
+  float cloudFar = cloudNoise(cloudCoordinates * 1.85 + vec2(2.4, -0.7));
+  float cloudNear = cloudNoise(cloudCoordinates * 5.4 - vec2(4.8, 1.9));
+  float cloudEnvelope = smoothstep(0.08, 0.28, altitude)
+    * (1.0 - smoothstep(0.72, 0.94, altitude));
+  float farCloudBand = smoothstep(0.43, 0.70, cloudFar) * cloudEnvelope;
+  float nearCloudBand = smoothstep(0.52, 0.80, cloudNear)
+    * smoothstep(0.15, 0.34, altitude)
+    * (1.0 - smoothstep(0.64, 0.86, altitude));
+  skyColor = mix(skyColor, vec3(0.70, 0.78, 0.79), farCloudBand * 0.52);
+  skyColor = mix(skyColor, vec3(0.88, 0.89, 0.84), nearCloudBand * 0.42);
 
   float lowMist = smoothstep(0.28, 0.52, altitude) * (1.0 - smoothstep(0.52, 0.76, altitude));
-  skyColor += vec3(0.09, 0.13, 0.13) * lowMist;
+  skyColor += vec3(0.07, 0.11, 0.12) * lowMist;
 
   float sunAlignment = max(dot(direction, normalize(uSunDirection)), 0.0);
-  float sunHalo = pow(sunAlignment, 18.0) * 0.22 + pow(sunAlignment, 96.0) * 0.82;
-  skyColor += vec3(1.0, 0.76, 0.47) * sunHalo;
+  float sunHalo = pow(sunAlignment, 16.0) * 0.045
+    + pow(sunAlignment, 44.0) * 0.12
+    + pow(sunAlignment, 150.0) * 0.34;
+  float sunDisc = smoothstep(0.9992, 0.99995, sunAlignment);
+  skyColor += vec3(1.0, 0.52, 0.22) * sunHalo;
+  skyColor = mix(skyColor, vec3(1.0, 0.88, 0.62), sunDisc * 0.78);
 
   gl_FragColor = vec4(skyColor, 1.0);
 }
@@ -83,25 +93,25 @@ interface MarineMaterials {
 function createMarineMaterials(): MarineMaterials {
   return {
     islandRock: new THREE.MeshStandardMaterial({
-      color: 0x24454b,
+      color: 0x2e555a,
       roughness: 1,
       metalness: 0,
       flatShading: true,
     }),
     islandShadow: new THREE.MeshStandardMaterial({
-      color: 0x15353c,
+      color: 0x193b43,
       roughness: 1,
       metalness: 0,
       flatShading: true,
     }),
     islandVegetation: new THREE.MeshStandardMaterial({
-      color: 0x1e4b43,
+      color: 0x25564a,
       roughness: 1,
       metalness: 0,
       flatShading: true,
     }),
     lighthouse: new THREE.MeshStandardMaterial({
-      color: 0xd3c7ad,
+      color: 0xe0d1b3,
       roughness: 0.9,
       metalness: 0,
       flatShading: true,
@@ -188,8 +198,8 @@ function addIsland(
 
 function addLighthouse(parent: THREE.Group, materials: MarineMaterials): void {
   const lighthouse = new THREE.Group();
-  lighthouse.position.set(-17, 0.03, -108);
-  lighthouse.scale.setScalar(0.78);
+  lighthouse.position.set(-9, 0.18, -112);
+  lighthouse.scale.setScalar(0.96);
   parent.add(lighthouse);
 
   const foundation = new THREE.Mesh(
@@ -227,13 +237,13 @@ function addLighthouse(parent: THREE.Group, materials: MarineMaterials): void {
   roof.position.y = 11.08;
   lighthouse.add(roof);
 
-  const beacon = new THREE.PointLight(0xffd991, 7, 70, 2);
+  const beacon = new THREE.PointLight(0xffd991, 6, 70, 2);
   beacon.position.set(0, 10.05, 0);
   lighthouse.add(beacon);
 }
 
 export function createMarineEnvironment(
-  sunDirection = new THREE.Vector3(-0.42, 0.76, -0.52).normalize(),
+  sunDirection = new THREE.Vector3(-0.30, 0.12, -0.95).normalize(),
 ): MarineEnvironmentBuild {
   const root = new THREE.Group();
   root.name = 'marine-environment';
@@ -266,6 +276,7 @@ export function createMarineEnvironment(
   const hemisphere = new THREE.HemisphereLight(0x9bc6d4, 0x102c32, 1.65);
   root.add(hemisphere);
 
+  addIsland(root, materials, -13, -117, 1.22, true);
   addIsland(root, materials, -91, -154, 1.55, true);
   addIsland(root, materials, 57, -178, 1.06, true);
   addIsland(root, materials, 130, -145, 0.72, false);

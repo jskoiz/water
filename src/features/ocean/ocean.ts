@@ -13,7 +13,7 @@ export interface OceanSurfaceService {
 export const oceanSurfaceServiceKey = createRuntimeServiceKey<OceanSurfaceService>('ocean.surface.v1');
 
 const OCEAN_SIZE = 480;
-const OCEAN_SEGMENTS = 180;
+const OCEAN_SEGMENTS = 240;
 const FOAM_TEXTURE_PATH = '/ocean/foam-breakup.png';
 
 const OCEAN_VERTEX_SHADER = /* glsl */ `
@@ -60,17 +60,19 @@ OceanWaveSample sampleOceanWave(vec2 point, float time) {
   result.dz = 0.0;
   result.foam = 0.0;
 
-  addWave(result, vec2(0.9701425, 0.2425356), 0.72, 32.0, 0.43, 0.0, point, time);
-  addWave(result, vec2(0.4718579, 0.8816745), 0.42, 16.0, 0.61, 1.7, point, time);
-  addWave(result, vec2(-0.8, 0.6), 0.22, 8.0, 0.82, 3.1, point, time);
-  addWave(result, vec2(0.2, -0.98), 0.13, 4.5, 1.18, -0.9, point, time);
-  addWave(result, vec2(-0.9353294, -0.3537814), 0.065, 2.4, 1.55, 2.2, point, time);
-  addWave(result, vec2(0.702713, -0.711473), 0.035, 1.25, 2.3, -1.5, point, time);
+  addWave(result, vec2(0.9701425, 0.2425356), 0.42, 26.0, 0.38, 0.0, point, time);
+  addWave(result, vec2(0.4718579, 0.8816745), 0.24, 13.0, 0.56, 1.7, point, time);
+  addWave(result, vec2(-0.8, 0.6), 0.14, 6.8, 0.82, 3.1, point, time);
+  addWave(result, vec2(0.2, -0.98), 0.085, 4.1, 1.12, -0.9, point, time);
+  addWave(result, vec2(-0.9353294, -0.3537814), 0.05, 2.6, 1.5, 2.2, point, time);
+  addWave(result, vec2(0.702713, -0.711473), 0.028, 1.7, 2.15, -1.5, point, time);
+  addWave(result, vec2(0.39, 0.92), 0.019, 1.15, 2.6, 0.4, point, time);
+  addWave(result, vec2(-0.72, 0.69), 0.013, 0.88, 2.9, -2.2, point, time);
 
   float slope = length(vec2(result.dx, result.dz));
-  float crest = smoothstep(0.35, 1.05, result.height);
-  float steepness = smoothstep(0.16, 0.72, slope);
-  result.foam = clamp(crest * 0.7 + steepness * 0.3, 0.0, 1.0);
+  float crest = smoothstep(0.3, 0.62, result.height);
+  float steepness = smoothstep(0.2, 0.5, slope);
+  result.foam = clamp(crest * 0.62 + steepness * 0.38, 0.0, 1.0);
   return result;
 }
 
@@ -115,27 +117,28 @@ void main() {
 
   float fresnel = pow(1.0 - max(dot(normal, viewDirection), 0.0), 3.4);
   float facingSun = max(dot(normal, sunDirection), 0.0);
-  vec3 reflectedSun = reflect(-sunDirection, normal);
-  float tightGlint = pow(max(dot(reflectedSun, viewDirection), 0.0), 112.0);
-  float broadGlint = pow(max(dot(reflectedSun, viewDirection), 0.0), 9.0) * 0.16;
+  vec3 halfVector = normalize(viewDirection + sunDirection);
+  float facetAlignment = max(dot(normal, halfVector), 0.0);
+  float tightGlint = pow(facetAlignment, 52.0) * 0.48;
+  float broadGlint = pow(facetAlignment, 18.0) * 0.055;
 
-  vec3 deepTeal = vec3(0.012, 0.125, 0.17);
-  vec3 coastalTeal = vec3(0.025, 0.30, 0.36);
+  vec3 deepTeal = vec3(0.008, 0.095, 0.14);
+  vec3 coastalTeal = vec3(0.018, 0.245, 0.31);
   vec3 waterColor = mix(deepTeal, coastalTeal, clamp(normal.y * 0.8 + 0.2, 0.0, 1.0));
-  waterColor = mix(waterColor, vec3(0.075, 0.40, 0.43), fresnel * 0.82);
-  waterColor += vec3(0.16, 0.20, 0.16) * facingSun * 0.14;
+  waterColor = mix(waterColor, vec3(0.045, 0.31, 0.36), fresnel * 0.58);
+  waterColor += vec3(0.10, 0.14, 0.12) * facingSun * 0.11;
 
-  vec2 foamUv = vOceanPosition * vec2(0.027, 0.041)
-    + vec2(uTime * 0.007, -uTime * 0.004);
+  vec2 foamUv = vOceanPosition * vec2(0.105, 0.14)
+    + vec2(uTime * 0.009, -uTime * 0.006);
   vec3 breakupA = texture2D(uFoamMap, foamUv).rgb;
-  vec3 breakupB = texture2D(uFoamMap, foamUv * 1.83 - vec2(uTime * 0.002, uTime * 0.003)).rgb;
+  vec3 breakupB = texture2D(uFoamMap, foamUv * 1.71 - vec2(uTime * 0.003, uTime * 0.004)).rgb;
   float breakup = mix(dot(breakupA, vec3(0.3333)), dot(breakupB, vec3(0.3333)), 0.42);
-  breakup = smoothstep(0.52, 0.94, breakup);
-  float foam = clamp(vFoam * (0.34 + breakup * 0.92), 0.0, 1.0);
-  vec3 foamColor = mix(vec3(0.37, 0.67, 0.68), vec3(0.88, 0.95, 0.90), breakup);
-  waterColor = mix(waterColor, foamColor, foam * 0.82);
+  breakup = smoothstep(0.57, 0.86, breakup);
+  float foam = clamp(vFoam * (0.12 + breakup * 0.54), 0.0, 1.0);
+  vec3 foamColor = mix(vec3(0.24, 0.54, 0.58), vec3(0.76, 0.88, 0.86), breakup);
+  waterColor = mix(waterColor, foamColor, foam * 0.48);
 
-  waterColor += vec3(1.0, 0.70, 0.36) * (tightGlint * 1.25 + broadGlint);
+  waterColor += vec3(1.0, 0.70, 0.36) * (tightGlint + broadGlint);
   waterColor = pow(max(waterColor, 0.0), vec3(0.92));
 
   gl_FragColor = vec4(waterColor, 1.0);
@@ -263,7 +266,7 @@ export function createOceanFeature(): RuntimeFeature {
           return;
         }
 
-        const sunDirection = new THREE.Vector3(-0.42, 0.76, -0.52).normalize();
+        const sunDirection = new THREE.Vector3(-0.30, 0.12, -0.95).normalize();
         const environment = createMarineEnvironment(sunDirection);
         root = environment.root;
         sky = environment.sky;
@@ -296,8 +299,8 @@ export function createOceanFeature(): RuntimeFeature {
         root.add(ocean);
         scene.add(root);
 
-        scene.background = new THREE.Color(0x44717d);
-        scene.fog = new THREE.FogExp2(0x709ba4, 0.0038);
+        scene.background = new THREE.Color(0x315c6b);
+        scene.fog = new THREE.FogExp2(0x5b8793, 0.0031);
 
         unregisterService = context.services.provide(oceanSurfaceServiceKey, {
           sampleHeight: (x: number, z: number, elapsedSeconds: number): number => (
