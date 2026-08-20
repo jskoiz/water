@@ -24,8 +24,17 @@ interface SprayParticle {
   readonly mesh: THREE.Mesh;
   readonly baseX: number;
   readonly baseY: number;
+  readonly baseZ: number;
   readonly phase: number;
   readonly spread: number;
+  readonly size: number;
+}
+
+interface WakeSection {
+  readonly x: number;
+  readonly z: number;
+  readonly width: number;
+  readonly alpha: number;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -203,34 +212,38 @@ class RaftController {
     this.wakeGroup.name = 'raft-wake';
 
     const woodMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
-      color: 0x9a7650,
+      color: 0xb4885a,
       map: this.woodTexture,
-      roughness: 0.88,
+      roughness: 0.84,
       metalness: 0.02,
-      emissive: 0x1a1008,
-      emissiveIntensity: 0.16,
+      emissive: 0x2c1a0d,
+      emissiveIntensity: 0.22,
     }));
     const darkWoodMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
-      color: 0x4a3524,
+      color: 0x765238,
       map: this.woodTexture,
-      roughness: 0.94,
+      roughness: 0.88,
       metalness: 0.01,
-      emissive: 0x0b0704,
-      emissiveIntensity: 0.12,
+      emissive: 0x24150a,
+      emissiveIntensity: 0.24,
     }));
     const ropeMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
-      color: 0x55402c,
-      roughness: 1,
+      color: 0x765639,
+      roughness: 0.94,
       metalness: 0,
+      emissive: 0x1b1008,
+      emissiveIntensity: 0.18,
     }));
     const sailMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
-      color: 0xd9ccb0,
+      color: 0xf0dfbd,
       map: this.sailTexture,
-      roughness: 0.98,
+      roughness: 0.94,
       metalness: 0,
       side: THREE.DoubleSide,
       transparent: true,
       alphaTest: 0.04,
+      emissive: 0x63482b,
+      emissiveIntensity: 0.28,
     }));
 
     const plankGeometry = this.registerGeometry(new THREE.BoxGeometry(0.36, 0.32, 4.75, 1, 1, 8));
@@ -331,46 +344,126 @@ class RaftController {
   }
 
   private buildWake(): void {
-    const wakeMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
-      color: 0xf4fbff,
+    const wakeMaterial = this.registerMaterial(new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: new THREE.Color(0xeafaff) },
+        uOpacity: { value: 0.72 },
+      },
+      vertexShader: /* glsl */ `
+        attribute float aAlpha;
+        varying float vAlpha;
+
+        void main() {
+          vAlpha = aAlpha;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform vec3 uColor;
+        uniform float uOpacity;
+        varying float vAlpha;
+
+        void main() {
+          gl_FragColor = vec4(uColor, vAlpha * uOpacity);
+        }
+      `,
       transparent: true,
-      opacity: 0.42,
       depthWrite: false,
+      depthTest: true,
       side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     }));
-    const wakeGeometry = this.registerGeometry(new THREE.PlaneGeometry(0.72, 4.8));
-    for (const x of [-0.88, 0.88]) {
+    const wakeSections: readonly WakeSection[] = [
+      { x: 0.56, z: 1.76, width: 0.24, alpha: 0.84 },
+      { x: 0.65, z: 2.08, width: 0.42, alpha: 0.7 },
+      { x: 0.82, z: 2.58, width: 0.62, alpha: 0.54 },
+      { x: 1.02, z: 3.24, width: 0.86, alpha: 0.38 },
+      { x: 1.22, z: 4.04, width: 1.06, alpha: 0.24 },
+      { x: 1.38, z: 4.96, width: 1.22, alpha: 0.12 },
+      { x: 1.46, z: 5.92, width: 1.34, alpha: 0 },
+    ];
+    for (const side of [-1, 1]) {
+      const wakeGeometry = this.createWakeRibbonGeometry(
+        wakeSections.map((section) => ({
+          ...section,
+          x: section.x * side,
+        })),
+      );
       const wake = new THREE.Mesh(wakeGeometry, wakeMaterial);
-      wake.position.set(x, -0.04, 2.5);
-      wake.rotation.x = -Math.PI / 2;
-      wake.rotation.z = x * 0.04;
-      wake.scale.set(0.85, 1, 1);
+      wake.position.y = 0.06;
+      wake.renderOrder = 1;
       this.wakeGroup.add(wake);
     }
 
     const sprayMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
-      color: 0xffffff,
+      color: 0xf4fcff,
       transparent: true,
-      opacity: 0.76,
+      opacity: 0.64,
       depthWrite: false,
     }));
-    const sprayGeometry = this.registerGeometry(new THREE.IcosahedronGeometry(0.085, 0));
-    for (let index = 0; index < 18; index += 1) {
-      const spread = (index % 6) / 5;
-      const baseX = (index % 2 === 0 ? -1 : 1) * (0.35 + spread * 1.2);
+    const sprayGeometry = this.registerGeometry(new THREE.SphereGeometry(0.065, 8, 5));
+    for (let index = 0; index < 24; index += 1) {
+      const spread = (index % 8) / 7;
+      const side = index % 2 === 0 ? -1 : 1;
+      const baseX = side * (0.32 + spread * 1.18 + (index % 3) * 0.06);
       const particle = new THREE.Mesh(sprayGeometry, sprayMaterial);
-      particle.position.set(baseX, 0.16 + (index % 3) * 0.05, 2.15 + (index % 5) * 0.25);
-      particle.scale.setScalar(0.5 + (index % 4) * 0.15);
+      const baseY = 0.11 + (index % 4) * 0.035;
+      const baseZ = 1.9 + (index % 8) * 0.28;
+      particle.position.set(baseX, baseY, baseZ);
+      particle.renderOrder = 2;
       this.wakeGroup.add(particle);
       this.sprayParticles.push({
         mesh: particle,
         baseX,
-        baseY: particle.position.y,
+        baseY,
+        baseZ,
         phase: index * 0.71,
         spread,
+        size: 0.52 + (index % 5) * 0.11,
       });
     }
     this.raftGroup.add(this.wakeGroup);
+  }
+
+  private createWakeRibbonGeometry(sections: readonly WakeSection[]): THREE.BufferGeometry {
+    const positions: number[] = [];
+    const alphas: number[] = [];
+    const indices: number[] = [];
+
+    for (const section of sections) {
+      const outerHalfWidth = section.width * 0.5;
+      const innerHalfWidth = section.width * 0.24;
+      positions.push(
+        section.x - outerHalfWidth, 0, section.z,
+        section.x - innerHalfWidth, 0, section.z,
+        section.x + innerHalfWidth, 0, section.z,
+        section.x + outerHalfWidth, 0, section.z,
+      );
+      alphas.push(0, section.alpha, section.alpha, 0);
+    }
+
+    for (let sectionIndex = 0; sectionIndex < sections.length - 1; sectionIndex += 1) {
+      const current = sectionIndex * 4;
+      const next = current + 4;
+      for (let lane = 0; lane < 3; lane += 1) {
+        const currentLeft = current + lane;
+        const currentRight = current + lane + 1;
+        const nextLeft = next + lane;
+        const nextRight = next + lane + 1;
+        indices.push(
+          currentLeft, nextLeft, nextRight,
+          currentLeft, nextRight, currentRight,
+        );
+      }
+    }
+
+    const geometry = this.registerGeometry(new THREE.BufferGeometry());
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('aAlpha', new THREE.Float32BufferAttribute(alphas, 1));
+    geometry.setIndex(indices);
+    return geometry;
   }
 
   private addRope(points: THREE.Vector3[], material: THREE.Material, radius: number): void {
@@ -493,17 +586,20 @@ class RaftController {
       const travel = (elapsedSeconds * (0.45 + speedFactor * 0.9) + particle.phase * 0.14) % 1;
       particle.mesh.position.x = particle.baseX + Math.sin(phase) * 0.12 * speedFactor;
       particle.mesh.position.y = particle.baseY + Math.abs(Math.sin(phase * 0.8)) * (0.18 + speedFactor * 0.25);
-      particle.mesh.position.z = 2.15 + travel * (1.25 + speedFactor * 1.25);
+      particle.mesh.position.z = particle.baseZ + travel * (0.8 + speedFactor * 1.4);
       particle.mesh.visible = speedFactor > 0.03;
-      particle.mesh.scale.setScalar((0.45 + particle.spread * 0.4) * (0.5 + speedFactor));
+      const size = particle.size * (0.5 + speedFactor * 0.72);
+      particle.mesh.scale.set(size * 0.82, size * 1.18, size * 0.82);
     }
   }
 
   private updateCamera(context: RuntimeContext, deltaSeconds: number): void {
-    this.cameraOffset.set(0, 3.75 + this.cameraPitch * 2.5, 8.25);
+    this.cameraOffset.set(0, 5.05 + this.cameraPitch * 2.65, 9.1);
     this.cameraOffset.applyAxisAngle(WORLD_UP, this.heading + this.cameraYaw);
     this.desiredCameraPosition.copy(this.raftGroup.position).add(this.cameraOffset);
-    this.targetOffset.set(0, 1.05 + this.cameraPitch * 1.25, -0.45);
+    // Keep the look point above the deck so the raised chase camera shows the
+    // cargo and plank texture without letting the raft drift out of frame.
+    this.targetOffset.set(0, 2.85 + this.cameraPitch * 1.15, -0.18);
     this.targetOffset.applyAxisAngle(WORLD_UP, this.heading);
     this.cameraTarget.copy(this.raftGroup.position).add(this.targetOffset);
     const cameraBlend = 1 - Math.exp(-6.5 * deltaSeconds);
