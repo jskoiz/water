@@ -73,6 +73,160 @@ function isFiniteVector(vector: THREE.Vector3): boolean {
   return Number.isFinite(vector.x) && Number.isFinite(vector.y) && Number.isFinite(vector.z);
 }
 
+interface DerivedSurfaceMaps {
+  readonly normalMap: THREE.DataTexture;
+  readonly roughnessMap: THREE.DataTexture;
+}
+
+interface DerivedSurfaceMapOptions {
+  readonly normalStrength: number;
+  readonly roughnessBias: number;
+  readonly roughnessScale: number;
+}
+
+function sampleAlbedoLuma(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+): number {
+  const wrappedX = ((x % width) + width) % width;
+  const wrappedY = ((y % height) + height) % height;
+  const index = (wrappedY * width + wrappedX) * 4;
+  return (data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114) / 255;
+}
+
+function createDerivedSurfaceMaps(
+  albedo: THREE.Texture,
+  options: DerivedSurfaceMapOptions,
+): DerivedSurfaceMaps {
+  const image = albedo.image as { width?: number; height?: number } | undefined;
+  const width = image?.width ?? 0;
+  const height = image?.height ?? 0;
+  if (width < 2 || height < 2) {
+    throw new Error('Raft albedo texture is missing a readable image for derived maps.');
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) {
+    throw new Error('Raft material maps require a 2D canvas context.');
+  }
+  context.drawImage(image as CanvasImageSource, 0, 0);
+  const pixels = context.getImageData(0, 0, width, height).data;
+  const normalData = new Uint8Array(width * height * 4);
+  const roughnessData = new Uint8Array(width * height * 4);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const dx = sampleAlbedoLuma(pixels, width, height, x + 1, y)
+        - sampleAlbedoLuma(pixels, width, height, x - 1, y);
+      const dy = sampleAlbedoLuma(pixels, width, height, x, y + 1)
+        - sampleAlbedoLuma(pixels, width, height, x, y - 1);
+      const normalX = -dx * options.normalStrength;
+      const normalY = -dy * options.normalStrength;
+      const inverseLength = 1 / Math.hypot(normalX, normalY, 1);
+      const pixel = (y * width + x) * 4;
+      normalData[pixel] = Math.round((normalX * inverseLength * 0.5 + 0.5) * 255);
+      normalData[pixel + 1] = Math.round((normalY * inverseLength * 0.5 + 0.5) * 255);
+      normalData[pixel + 2] = Math.round((inverseLength * 0.5 + 0.5) * 255);
+      normalData[pixel + 3] = 255;
+
+      const roughness = clamp(
+        options.roughnessBias + sampleAlbedoLuma(pixels, width, height, x, y) * options.roughnessScale,
+        0.16,
+        1,
+      );
+      const roughnessByte = Math.round(roughness * 255);
+      roughnessData[pixel] = roughnessByte;
+      roughnessData[pixel + 1] = roughnessByte;
+      roughnessData[pixel + 2] = roughnessByte;
+      roughnessData[pixel + 3] = 255;
+    }
+  }
+
+  const configureMap = (texture: THREE.DataTexture): THREE.DataTexture => {
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.generateMipmaps = true;
+    texture.flipY = albedo.flipY;
+    texture.colorSpace = THREE.NoColorSpace;
+    texture.needsUpdate = true;
+    return texture;
+  };
+
+  return {
+    normalMap: configureMap(new THREE.DataTexture(normalData, width, height)),
+    roughnessMap: configureMap(new THREE.DataTexture(roughnessData, width, height)),
+  };
+}
+
+interface SailMeshData {
+  readonly positions: Float32Array;
+  readonly uvs: Float32Array;
+  readonly billowWeights: Float32Array;
+  readonly indices: number[];
+}
+
+function createSubdividedSailData(segments = 12): SailMeshData {
+  const tack = { x: 0, y: 1.25, z: -0.79, u: 1, v: 0 };
+  const head = { x: 0, y: 4.36, z: -0.79, u: 0.06, v: 0 };
+  const clew = { x: -2.02, y: 1.22, z: -0.79, u: 1, v: 1 };
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const billowWeights: number[] = [];
+  const indexOf = new Map<string, number>();
+  const keyFor = (i: number, j: number): string => `${i},${j}`;
+
+  for (let i = 0; i <= segments; i += 1) {
+    for (let j = 0; j <= segments - i; j += 1) {
+      const tackWeight = i / segments;
+      const headWeight = j / segments;
+      const clewWeight = (segments - i - j) / segments;
+      indexOf.set(keyFor(i, j), positions.length / 3);
+      positions.push(
+        tack.x * tackWeight + head.x * headWeight + clew.x * clewWeight,
+        tack.y * tackWeight + head.y * headWeight + clew.y * clewWeight,
+        tack.z * tackWeight + head.z * headWeight + clew.z * clewWeight,
+      );
+      uvs.push(
+        tack.u * tackWeight + head.u * headWeight + clew.u * clewWeight,
+        tack.v * tackWeight + head.v * headWeight + clew.v * clewWeight,
+      );
+      billowWeights.push(clewWeight * (0.55 + tackWeight * 0.45 + headWeight * 0.85));
+    }
+  }
+
+  const indices: number[] = [];
+  for (let i = 0; i < segments; i += 1) {
+    for (let j = 0; j < segments - i; j += 1) {
+      const a = indexOf.get(keyFor(i, j));
+      const b = indexOf.get(keyFor(i + 1, j));
+      const c = indexOf.get(keyFor(i, j + 1));
+      if (a === undefined || b === undefined || c === undefined) {
+        continue;
+      }
+      indices.push(a, b, c);
+      const d = indexOf.get(keyFor(i + 1, j + 1));
+      if (d !== undefined) {
+        indices.push(b, d, c);
+      }
+    }
+  }
+
+  return {
+    positions: new Float32Array(positions),
+    uvs: new Float32Array(uvs),
+    billowWeights: new Float32Array(billowWeights),
+    indices,
+  };
+}
+
 /**
  * Advance x'' + 2*zeta*omega*x' + omega^2*x = 0 exactly over one frame.
  *
@@ -204,8 +358,10 @@ class RaftController {
   private hud: RaftHud | null = null;
   private sailGeometry: THREE.BufferGeometry | null = null;
   private sailBasePositions: Float32Array | null = null;
+  private sailBillowWeights: Float32Array | null = null;
   private woodTexture: THREE.Texture | null = null;
   private sailTexture: THREE.Texture | null = null;
+  private readonly waterlineUniform = { value: 0 };
   private wakeUniforms: {
     readonly uTime: { value: number };
     readonly uStrength: { value: number };
@@ -316,6 +472,7 @@ class RaftController {
     this.sprayParticles.length = 0;
     this.sailGeometry = null;
     this.sailBasePositions = null;
+    this.sailBillowWeights = null;
     this.woodTexture = null;
     this.sailTexture = null;
     this.wakeUniforms = null;
@@ -346,39 +503,55 @@ class RaftController {
     this.raftGroup.userData.raftFeature = true;
     this.wakeGroup.name = 'raft-wake';
 
-    const woodMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
+    const woodMaps = this.registerDerivedMaps(this.woodTexture, {
+      normalStrength: 2.1,
+      roughnessBias: 0.36,
+      roughnessScale: 0.4,
+    });
+    const sailMaps = this.registerDerivedMaps(this.sailTexture, {
+      normalStrength: 1.15,
+      roughnessBias: 0.62,
+      roughnessScale: 0.22,
+    });
+
+    const woodMaterial = this.applyWaterlineWetness(this.registerMaterial(new THREE.MeshStandardMaterial({
       color: 0xa9794f,
       map: this.woodTexture,
-      roughness: 0.76,
-      metalness: 0.01,
-      emissive: 0x2c1a0d,
-      emissiveIntensity: 0.08,
-    }));
-    const darkWoodMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
+      normalMap: woodMaps.normalMap,
+      normalScale: new THREE.Vector2(0.62, 0.62),
+      roughnessMap: woodMaps.roughnessMap,
+      roughness: 0.78,
+      metalness: 0.02,
+      envMapIntensity: 0.72,
+    })));
+    const darkWoodMaterial = this.applyWaterlineWetness(this.registerMaterial(new THREE.MeshStandardMaterial({
       color: 0x67442f,
       map: this.woodTexture,
-      roughness: 0.82,
-      metalness: 0.01,
-      emissive: 0x24150a,
-      emissiveIntensity: 0.1,
-    }));
-    const ropeMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
+      normalMap: woodMaps.normalMap,
+      normalScale: new THREE.Vector2(0.48, 0.48),
+      roughnessMap: woodMaps.roughnessMap,
+      roughness: 0.84,
+      metalness: 0.02,
+      envMapIntensity: 0.58,
+    })));
+    const ropeMaterial = this.applyWaterlineWetness(this.registerMaterial(new THREE.MeshStandardMaterial({
       color: 0x765639,
       roughness: 0.88,
       metalness: 0,
-      emissive: 0x1b1008,
-      emissiveIntensity: 0.06,
-    }));
+      envMapIntensity: 0.42,
+    })));
     const sailMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
       color: 0xe8d6b4,
       map: this.sailTexture,
-      roughness: 0.84,
+      normalMap: sailMaps.normalMap,
+      normalScale: new THREE.Vector2(0.34, 0.34),
+      roughnessMap: sailMaps.roughnessMap,
+      roughness: 0.82,
       metalness: 0,
+      envMapIntensity: 0.55,
       side: THREE.DoubleSide,
       transparent: true,
       alphaTest: 0.04,
-      emissive: 0x63482b,
-      emissiveIntensity: 0.07,
     }));
 
     const plankGeometry = this.registerGeometry(new THREE.BoxGeometry(0.36, 0.32, 4.75, 1, 1, 8));
@@ -423,20 +596,19 @@ class RaftController {
     boom.receiveShadow = true;
     this.raftGroup.add(boom);
 
+    const sailMesh = createSubdividedSailData();
+    this.sailBasePositions = sailMesh.positions;
+    this.sailBillowWeights = sailMesh.billowWeights;
     this.sailGeometry = this.registerGeometry(new THREE.BufferGeometry());
-    this.sailBasePositions = new Float32Array([
-      0, 1.25, -0.79,
-      0, 4.36, -0.79,
-      -2.02, 1.22, -0.79,
-    ]);
     this.sailGeometry.setAttribute(
       'position',
-      new THREE.BufferAttribute(this.sailBasePositions.slice(), 3),
+      new THREE.BufferAttribute(sailMesh.positions.slice(), 3),
     );
     this.sailGeometry.setAttribute(
       'uv',
-      new THREE.BufferAttribute(new Float32Array([1, 0, 0.06, 0, 1, 1]), 2),
+      new THREE.BufferAttribute(sailMesh.uvs, 2),
     );
+    this.sailGeometry.setIndex(sailMesh.indices);
     this.sailGeometry.computeVertexNormals();
     const sail = new THREE.Mesh(this.sailGeometry, sailMaterial);
     sail.name = 'raft-canvas-sail';
@@ -825,6 +997,7 @@ class RaftController {
       this.previousHeaveTarget = heaveTarget;
       this.surfaceTargetInitialized = true;
       this.wakeImpact = 0;
+      this.waterlineUniform.value = averageHeight;
       this.validateMotionState();
       this.raftGroup.position.set(this.positionX, this.positionY, this.positionZ);
       this.raftGroup.rotation.set(this.pitch, this.heading, this.roll);
@@ -898,6 +1071,7 @@ class RaftController {
       this.wakeImpact * Math.exp(-8.5 * deltaSeconds),
       impactSignal,
     );
+    this.waterlineUniform.value = averageHeight;
     this.validateMotionState();
     this.raftGroup.position.set(this.positionX, this.positionY, this.positionZ);
     this.raftGroup.rotation.set(this.pitch, this.heading, this.roll);
@@ -932,15 +1106,25 @@ class RaftController {
   private updateSail(elapsedSeconds: number): void {
     const geometry = this.sailGeometry;
     const basePositions = this.sailBasePositions;
-    if (!geometry || !basePositions) {
+    const billowWeights = this.sailBillowWeights;
+    if (!geometry || !basePositions || !billowWeights) {
       return;
     }
     const position = geometry.getAttribute('position');
-    const billow = Math.sin(elapsedSeconds * 1.4) * 0.12 * (0.35 + this.sailPower);
-    position.setZ(0, basePositions[2] + billow * 0.1);
-    position.setZ(1, basePositions[5] + billow * 0.45);
-    position.setZ(2, basePositions[8] + billow);
+    const billow = Math.sin(elapsedSeconds * 1.4) * 0.16 * (0.35 + this.sailPower);
+    const crossChop = Math.sin(elapsedSeconds * 2.3) * 0.045 * (0.2 + this.sailPower);
+    for (let index = 0; index < position.count; index += 1) {
+      const weight = billowWeights[index] ?? 0;
+      const base = index * 3;
+      position.setXYZ(
+        index,
+        basePositions[base] + crossChop * weight * 0.35,
+        basePositions[base + 1],
+        basePositions[base + 2] + billow * weight,
+      );
+    }
     position.needsUpdate = true;
+    geometry.computeVertexNormals();
   }
 
   private updateWake(elapsedSeconds: number): void {
@@ -1015,6 +1199,60 @@ class RaftController {
 
   private registerMaterial<T extends THREE.Material>(material: T): T {
     this.materials.add(material);
+    return material;
+  }
+
+  private registerDerivedMaps(
+    albedo: THREE.Texture,
+    options: DerivedSurfaceMapOptions,
+  ): DerivedSurfaceMaps {
+    const maps = createDerivedSurfaceMaps(albedo, options);
+    this.textures.add(maps.normalMap);
+    this.textures.add(maps.roughnessMap);
+    return maps;
+  }
+
+  private applyWaterlineWetness(
+    material: THREE.MeshStandardMaterial,
+  ): THREE.MeshStandardMaterial {
+    const waterline = this.waterlineUniform;
+    material.onBeforeCompile = (shader) => {
+      shader.uniforms.uWaterHeight = waterline;
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          varying vec3 vWaterlineWorldPosition;`,
+        )
+        .replace(
+          '#include <project_vertex>',
+          `#include <project_vertex>
+          vWaterlineWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          uniform float uWaterHeight;
+          varying vec3 vWaterlineWorldPosition;`,
+        )
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          float waterlineWetness = smoothstep(
+            uWaterHeight + 0.42,
+            uWaterHeight + 0.04,
+            vWaterlineWorldPosition.y
+          );
+          diffuseColor.rgb *= mix(vec3(1.0), vec3(0.52, 0.60, 0.62), waterlineWetness * 0.58);`,
+        )
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `#include <roughnessmap_fragment>
+          roughnessFactor = mix(roughnessFactor, roughnessFactor * 0.22, waterlineWetness);`,
+        );
+    };
+    material.customProgramCacheKey = () => 'raft-waterline-wetness';
     return material;
   }
 }

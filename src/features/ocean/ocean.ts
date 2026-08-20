@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 
-import { createMarineEnvironment } from '../environment/atmosphere';
+import {
+  captureMarineSkyEnvironment,
+  createMarineEnvironment,
+  type MarineSkyEnvironment,
+} from '../environment/atmosphere';
 import { createRuntimeServiceKey } from '../../runtime/services';
 import type { RuntimeFeature } from '../../runtime/types';
 import {
@@ -72,6 +76,7 @@ const OCEAN_FRAGMENT_SHADER = /* glsl */ `
 uniform float uTime;
 uniform vec3 uSunDirection;
 uniform sampler2D uFoamMap;
+uniform samplerCube uEnvMap;
 
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
@@ -91,6 +96,7 @@ float foamLuma(vec2 uv) {
 }
 
 vec3 skyRadiance(vec3 direction) {
+  // Fallback only if the captured marine cubemap is unavailable.
   vec3 skyDirection = normalize(direction);
   float horizon = smoothstep(-0.12, 0.52, skyDirection.y);
   vec3 horizonColor = vec3(0.15, 0.34, 0.42);
@@ -101,6 +107,15 @@ vec3 skyRadiance(vec3 direction) {
   sky += vec3(1.0, 0.72, 0.42) * pow(sunAlignment, 256.0) * 1.25;
   sky += vec3(1.0, 0.43, 0.16) * pow(sunAlignment, 28.0) * 0.018;
   return sky;
+}
+
+vec3 sampleReflectedSky(vec3 direction) {
+  vec3 skyDirection = normalize(direction);
+#ifdef USE_ENV_CUBE
+  return textureCube(uEnvMap, skyDirection).rgb;
+#else
+  return skyRadiance(skyDirection);
+#endif
 }
 
 void main() {
@@ -132,7 +147,7 @@ void main() {
   float cosTheta = clamp(dot(normal, viewDirection), 0.0, 1.0);
   float fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - cosTheta, 5.0);
   vec3 reflectedDirection = normalize(reflect(-viewDirection, normal));
-  vec3 reflectedSky = skyRadiance(reflectedDirection);
+  vec3 reflectedSky = sampleReflectedSky(reflectedDirection);
 
   // Use the wave height as a depth proxy for a finite water column: troughs
   // read denser and bluer while crests receive more transmitted sky color.
@@ -284,6 +299,7 @@ export function createOceanFeature(): RuntimeFeature {
   let scene: THREE.Scene | null = null;
   let sceneState: SceneState | null = null;
   let activeFoamTexture: THREE.Texture | null = null;
+  let skyEnvironment: MarineSkyEnvironment | null = null;
   let disposed = false;
 
   return {
@@ -315,6 +331,8 @@ export function createOceanFeature(): RuntimeFeature {
         const environment = createMarineEnvironment(sunDirection);
         root = environment.root;
         sky = environment.sky;
+        skyEnvironment = captureMarineSkyEnvironment(context.renderer, environment.sunDirection);
+        scene.environment = skyEnvironment.envMap;
 
         oceanUniforms = {
           uTime: { value: 0 },
@@ -325,9 +343,13 @@ export function createOceanFeature(): RuntimeFeature {
         const oceanMaterial = new THREE.ShaderMaterial({
           // Fog and color-management uniforms are cloned per material; custom
           // uniforms stay shared with the feature so update() mutates live values.
+          defines: {
+            USE_ENV_CUBE: '',
+          },
           uniforms: {
             ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
             ...oceanUniforms,
+            uEnvMap: { value: skyEnvironment.cubeTexture },
           },
           vertexShader: OCEAN_VERTEX_SHADER,
           fragmentShader: OCEAN_FRAGMENT_SHADER,
@@ -367,10 +389,12 @@ export function createOceanFeature(): RuntimeFeature {
           disposeObjectResources(root);
         }
         activeFoamTexture?.dispose();
+        skyEnvironment?.dispose();
         root = null;
         sky = null;
         oceanUniforms = null;
         activeFoamTexture = null;
+        skyEnvironment = null;
         scene.background = sceneState.background;
         scene.fog = sceneState.fog;
         scene.environment = sceneState.environment;
@@ -402,6 +426,8 @@ export function createOceanFeature(): RuntimeFeature {
       sky = null;
       oceanUniforms = null;
       activeFoamTexture = null;
+      skyEnvironment?.dispose();
+      skyEnvironment = null;
 
       if (scene && sceneState) {
         scene.background = sceneState.background;

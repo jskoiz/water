@@ -6,6 +6,12 @@ export interface MarineEnvironmentBuild {
   readonly sunDirection: THREE.Vector3;
 }
 
+export interface MarineSkyEnvironment {
+  readonly cubeTexture: THREE.CubeTexture;
+  readonly envMap: THREE.Texture;
+  dispose(): void;
+}
+
 const SKY_VERTEX_SHADER = /* glsl */ `
 varying vec3 vSkyDirection;
 
@@ -88,9 +94,7 @@ float sunIntensity(float zenithCosine) {
   return solarIrradiance * max(0.0, 1.0 - exp(-((cutoffAngle - angle) / steepness)));
 }
 
-void main() {
-  vec3 direction = normalize(vSkyDirection);
-  vec3 sunDirection = normalize(uSunDirection);
+vec3 marineSkyRadiance(vec3 direction, vec3 sunDirection) {
   float viewZenithCosine = max(direction.y, 0.0);
   float sunZenithCosine = max(sunDirection.y, 0.0);
   float viewAirMass = opticalAirMass(viewZenithCosine);
@@ -177,14 +181,96 @@ void main() {
   skyColor += vec3(1.0, 0.59, 0.28) * sunHalo * sunVisibility;
   skyColor += vec3(8.0, 4.4, 1.45) * sunDisc * sunVisibility;
 
-  // Keep the shader in linear-sRGB scene space; Three.js applies the active
-  // renderer tone mapper and final sRGB transform through these chunks.
-  gl_FragColor = vec4(max(skyColor, vec3(0.0)), 1.0);
+  return max(skyColor, vec3(0.0));
+}
+
+void main() {
+  vec3 skyColor = marineSkyRadiance(normalize(vSkyDirection), normalize(uSunDirection));
+  // Keep the on-screen dome in linear-sRGB scene space; Three.js applies the
+  // active renderer tone mapper and final sRGB transform through these chunks.
+  gl_FragColor = vec4(skyColor, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
   #include <dithering_fragment>
 }
 `;
+
+const SKY_LINEAR_FRAGMENT_SHADER = SKY_FRAGMENT_SHADER
+  .replace('#include <dithering_pars_fragment>\n', '')
+  .replace(
+    /void main\(\) \{[\s\S]*$/,
+    `void main() {
+  // Linear HDR capture for cubemap / PMREM. Tone mapping stays on the
+  // on-screen sky dome and on materials that sample this environment.
+  gl_FragColor = vec4(
+    marineSkyRadiance(normalize(vSkyDirection), normalize(uSunDirection)),
+    1.0
+  );
+}
+`,
+  );
+
+export function getMarineSkyShaderSource(): string {
+  return SKY_FRAGMENT_SHADER;
+}
+
+export function captureMarineSkyEnvironment(
+  renderer: THREE.WebGLRenderer,
+  sunDirection: THREE.Vector3,
+): MarineSkyEnvironment {
+  const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256, {
+    type: THREE.HalfFloatType,
+    format: THREE.RGBAFormat,
+    generateMipmaps: true,
+    minFilter: THREE.LinearMipmapLinearFilter,
+    magFilter: THREE.LinearFilter,
+    colorSpace: THREE.LinearSRGBColorSpace,
+  });
+  const captureMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      uSunDirection: { value: sunDirection.clone().normalize() },
+    },
+    vertexShader: SKY_VERTEX_SHADER,
+    fragmentShader: SKY_LINEAR_FRAGMENT_SHADER,
+    side: THREE.BackSide,
+    depthWrite: false,
+    depthTest: false,
+    fog: false,
+    dithering: false,
+    toneMapped: false,
+  });
+  const captureGeometry = new THREE.SphereGeometry(10, 32, 16);
+  const captureSky = new THREE.Mesh(captureGeometry, captureMaterial);
+  const captureScene = new THREE.Scene();
+  captureScene.add(captureSky);
+
+  const cubeCamera = new THREE.CubeCamera(0.1, 20, cubeRenderTarget);
+  const previousToneMapping = renderer.toneMapping;
+  const previousOutputColorSpace = renderer.outputColorSpace;
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  try {
+    cubeCamera.update(renderer, captureScene);
+  } finally {
+    renderer.toneMapping = previousToneMapping;
+    renderer.outputColorSpace = previousOutputColorSpace;
+  }
+
+  const pmremGenerator = new THREE.PMREMGenerator(renderer);
+  const envMap = pmremGenerator.fromCubemap(cubeRenderTarget.texture).texture;
+  pmremGenerator.dispose();
+  captureMaterial.dispose();
+  captureGeometry.dispose();
+
+  return {
+    cubeTexture: cubeRenderTarget.texture,
+    envMap,
+    dispose(): void {
+      cubeRenderTarget.dispose();
+      envMap.dispose();
+    },
+  };
+}
 
 interface MarineMaterials {
   readonly islandRock: THREE.MeshStandardMaterial;
@@ -201,30 +287,35 @@ function createMarineMaterials(): MarineMaterials {
       color: 0x2e555a,
       roughness: 0.94,
       metalness: 0,
+      envMapIntensity: 0.85,
       flatShading: false,
     }),
     islandShadow: new THREE.MeshStandardMaterial({
       color: 0x193b43,
       roughness: 0.98,
       metalness: 0,
+      envMapIntensity: 0.7,
       flatShading: false,
     }),
     islandVegetation: new THREE.MeshStandardMaterial({
       color: 0x25564a,
       roughness: 0.91,
       metalness: 0,
+      envMapIntensity: 0.8,
       flatShading: false,
     }),
     lighthouse: new THREE.MeshStandardMaterial({
       color: 0xe0d1b3,
       roughness: 0.66,
       metalness: 0,
+      envMapIntensity: 1.05,
       flatShading: false,
     }),
     lighthouseTrim: new THREE.MeshStandardMaterial({
       color: 0x3e4d4c,
       roughness: 0.34,
       metalness: 0.28,
+      envMapIntensity: 1.15,
       flatShading: false,
     }),
     lighthouseGlow: new THREE.MeshStandardMaterial({
@@ -409,7 +500,9 @@ export function createMarineEnvironment(
   root.add(sun.target);
   root.add(sun);
 
-  const hemisphere = new THREE.HemisphereLight(0x8dbdce, 0x16282d, 1.05);
+  // IBL from the captured sky supplies the main ambient. Keep a low
+  // hemisphere so shadowed faces do not go black without double-lighting.
+  const hemisphere = new THREE.HemisphereLight(0x8dbdce, 0x16282d, 0.38);
   root.add(hemisphere);
 
   // Destination positions intentionally remain unchanged from OCE-005.
