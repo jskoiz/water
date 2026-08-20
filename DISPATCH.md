@@ -2,7 +2,7 @@
 
 This is the coordinator-owned source of truth for implementation dispatches. A task marked `ready` is queued for a future worker; it is not active until the coordinator records a worker thread, branch, worktree, and base commit.
 
-Foundation, first-pass ocean/raft, QA, and the browser-found fog repair are integrated. Screenshot comparison opened `OCE-004` and `RAFT-002` as active, disjoint visual-polish lanes.
+Foundation, first-pass features, QA, fog repair, and first visual-polish lanes are integrated. The second screenshot rejected two overcorrections and opened narrow `OCE-005` horizon-scale and `RAFT-003` camera-framing lanes.
 
 Every implementation dispatch uses `gpt-5.6-luna` at `max` reasoning effort and contains exactly one lane plus the exclusive write scope recorded below.
 
@@ -20,9 +20,11 @@ Use `blocked` whenever a dependency or acceptance decision prevents dispatch. On
 | `OCE-001` | `ocean-rendering` | `blocked` | Workspace policy rejected writes before mutation | `/root/ocean_oce001` | `c1/ocean-rendering` / `/private/tmp/water-oce001` / base `ccfc531` | No changes; superseded by `OCE-002` |
 | `OCE-002` | `ocean-rendering` | `integrated` | `OCE-001` clean blocker; foundation/runtime reviewed | `/root/ocean_oce002` | `c1/ocean-rendering-2` / `/Users/jk/Desktop/water/.worktrees/oce002` / base `4860d54` | `src/features/ocean/**`; `src/features/environment/**`; `public/ocean/**`; `tests/ocean/**` |
 | `OCE-003` | `ocean-rendering` | `integrated` | Integrated browser fatal after `OCE-002` composition | `/root/ocean_oce003` | `c1/ocean-fog-fix` / `/Users/jk/Desktop/water/.worktrees/oce003` / base `cf21135` | `src/features/ocean/ocean.ts`; `tests/ocean/**` |
-| `OCE-004` | `ocean-rendering` | `active` | Repaired runtime screenshot comparison at `055184c` | `/root/ocean_oce004` | `c1/ocean-visual-polish` / `/Users/jk/Desktop/water/.worktrees/oce004` / base `055184c` | `src/features/ocean/**`; `src/features/environment/**` |
+| `OCE-004` | `ocean-rendering` | `integrated` | Repaired runtime screenshot comparison at `055184c` | `/root/ocean_oce004` | `c1/ocean-visual-polish` / `/Users/jk/Desktop/water/.worktrees/oce004` / base `055184c` | `src/features/ocean/**`; `src/features/environment/**` |
+| `OCE-005` | `ocean-rendering` | `active` | Second screenshot showed foreground-sized destination | `/root/ocean_oce005` | `c1/horizon-scale-fix` / `/Users/jk/Desktop/water/.worktrees/oce005` / base `3e7bfb7` | `src/features/environment/atmosphere.ts` |
 | `RAFT-001` | `raft-systems` | `integrated` | `FND-001` integrated and runtime contracts reviewed at `ccfc531` | `/root/raft_raft001` | `c1/raft-systems` / `/private/tmp/water-raft001` / base `ccfc531` | `src/features/raft/**`; `public/raft/**`; `tests/raft/**` |
-| `RAFT-002` | `raft-systems` | `active` | Repaired runtime screenshot comparison at `055184c` | `/root/raft_raft002` | `c1/raft-visual-polish` / `/Users/jk/Desktop/water/.worktrees/raft002` / base `055184c` | `src/features/raft/**` |
+| `RAFT-002` | `raft-systems` | `integrated` | Repaired runtime screenshot comparison at `055184c` | `/root/raft_raft002` | `c1/raft-visual-polish` / `/Users/jk/Desktop/water/.worktrees/raft002` / base `055184c` | `src/features/raft/**` |
+| `RAFT-003` | `raft-systems` | `active` | Second screenshot clipped deck/hull below viewport | `/root/raft_raft003` | `c1/raft-framing-fix` / `/Users/jk/Desktop/water/.worktrees/raft003` / base `3e7bfb7` | `src/features/raft/raft.ts` |
 | `QA-001` | `world-qa` | `integrated` | `FND-001` integrated; dev URL `http://127.0.0.1:5173`; Codex In-app Browser runner | `/root/qa_qa001` | `c1/world-qa-smoke` / `/private/tmp/water-qa001` / base `ccfc531` | `qa/**` |
 
 Paths not listed in a worker's row are out of scope. Dependency or shared-file changes are returned to the coordinator for a separate dispatch; workers do not widen their own scope.
@@ -112,7 +114,9 @@ At handoff, record:
 | `OCE-001` | `ccfc531` | None | Clean base confirmed; no diff to review | Not run; blocked before implementation | _Not merged_ | Superseded after `/private/tmp` write policy rejected both patch attempts. |
 | `OCE-002` | `4860d54` | `5af681a` | Full scope/shader/lifecycle review passed; required-asset loading corrected before handoff | Worker and coordinator: typecheck/build; foam asset hash | `9ce8ca4` | Integrated Browser exposed missing Three.js fog uniforms after composition. |
 | `OCE-003` | `cf21135` | `f23066c` | Exact seven-line shader diff reviewed | Worker and coordinator: typecheck/build; coordinator browser rerun cleared fatal | `055184c` | Fog retained with cloned complete uniforms; post-repair log segment has no new error. |
-| `OCE-004` | `055184c` | _Active_ | Concept/first screenshot supplied to worker | _Pending handoff_ | _Not merged_ | Make clouds, destination, wave scale, glints, and whitecaps legible. |
+| `OCE-004` | `055184c` | `9d91b4e` | Scope/diff and CPU/shader parity reviewed | Worker and coordinator: typecheck/build; worker browser desktop/mobile | `3e7bfb7` | Clouds/waves/glints improved; second screenshot found destination overscaled. |
+| `OCE-005` | `3e7bfb7` | _Active_ | Second screenshot supplied as exact defect evidence | _Pending handoff_ | _Not merged_ | Change only destination scale/placement in atmosphere. |
 | `RAFT-001` | `ccfc531` | `d995cc3` | Full scope/diff and lifecycle review passed; asset hashes match | Worker and coordinator: typecheck/build; diff checks | `c6e6d52` | Live integration with `ocean.surface.v1` and browser proof remain. |
-| `RAFT-002` | `055184c` | _Active_ | Concept/first screenshot supplied to worker | _Pending handoff_ | _Not merged_ | Improve framing, material readability, wake/spray, and HUD scale without changing behavior. |
+| `RAFT-002` | `055184c` | `5dec595` | Scope/diff and resource lifecycle reviewed | Worker and coordinator: typecheck/build; focused assertions | `0b8f5c8` | Wake/material/HUD improved; second screenshot found camera over-zoomed. |
+| `RAFT-003` | `3e7bfb7` | _Active_ | Second screenshot supplied as exact defect evidence | _Pending handoff_ | _Not merged_ | Change only chase-camera framing; preserve polished behavior/visuals. |
 | `QA-001` | `ccfc531` | `ea7d849` | Full scope/diff review passed; seven Water markers defaulted | Worker and coordinator: syntax/import checks; no-server preflight correctly failed | `e200361` | Successful HTTP path and final In-app Browser run remain coordinator gates. |
