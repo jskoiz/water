@@ -3,7 +3,11 @@ import * as THREE from 'three';
 import { createMarineEnvironment } from '../environment/atmosphere';
 import { createRuntimeServiceKey } from '../../runtime/services';
 import type { RuntimeFeature } from '../../runtime/types';
-import { sampleOceanNormal, sampleOceanWave } from './waves';
+import {
+  createOceanWaveShaderSource,
+  sampleOceanNormal,
+  sampleOceanWave,
+} from './waves';
 
 export interface OceanSurfaceService {
   sampleHeight(x: number, z: number, elapsedSeconds: number): number;
@@ -15,80 +19,46 @@ export const oceanSurfaceServiceKey = createRuntimeServiceKey<OceanSurfaceServic
 const OCEAN_SIZE = 480;
 const OCEAN_SEGMENTS = 240;
 const FOAM_TEXTURE_PATH = '/ocean/foam-breakup.png';
+const OCEAN_WAVE_SHADER_SOURCE = createOceanWaveShaderSource();
 
 const OCEAN_VERTEX_SHADER = /* glsl */ `
-const float TWO_PI = 6.28318530718;
+${OCEAN_WAVE_SHADER_SOURCE}
 
 uniform float uTime;
 
 varying vec3 vWorldPosition;
-varying vec3 vNormal;
+varying vec3 vWorldNormal;
 varying vec2 vOceanPosition;
 varying float vFoam;
-
-struct OceanWaveSample {
-  float height;
-  float dx;
-  float dz;
-  float foam;
-};
-
-void addWave(
-  inout OceanWaveSample result,
-  vec2 direction,
-  float amplitude,
-  float wavelength,
-  float speed,
-  float phaseOffset,
-  vec2 point,
-  float time
-) {
-  float frequency = TWO_PI / wavelength;
-  float phase = dot(point, direction) * frequency + time * speed + phaseOffset;
-  float sine = sin(phase);
-  float cosine = cos(phase);
-  float derivative = amplitude * frequency * cosine;
-  result.height += amplitude * sine;
-  result.dx += derivative * direction.x;
-  result.dz += derivative * direction.y;
-}
-
-OceanWaveSample sampleOceanWave(vec2 point, float time) {
-  OceanWaveSample result;
-  result.height = 0.0;
-  result.dx = 0.0;
-  result.dz = 0.0;
-  result.foam = 0.0;
-
-  addWave(result, vec2(0.9701425, 0.2425356), 0.42, 26.0, 0.38, 0.0, point, time);
-  addWave(result, vec2(0.4718579, 0.8816745), 0.24, 13.0, 0.56, 1.7, point, time);
-  addWave(result, vec2(-0.8, 0.6), 0.14, 6.8, 0.82, 3.1, point, time);
-  addWave(result, vec2(0.2, -0.98), 0.085, 4.1, 1.12, -0.9, point, time);
-  addWave(result, vec2(-0.9353294, -0.3537814), 0.05, 2.6, 1.5, 2.2, point, time);
-  addWave(result, vec2(0.702713, -0.711473), 0.028, 1.7, 2.15, -1.5, point, time);
-  addWave(result, vec2(0.39, 0.92), 0.019, 1.15, 2.6, 0.4, point, time);
-  addWave(result, vec2(-0.72, 0.69), 0.013, 0.88, 2.9, -2.2, point, time);
-
-  float slope = length(vec2(result.dx, result.dz));
-  float crest = smoothstep(0.3, 0.62, result.height);
-  float steepness = smoothstep(0.2, 0.5, slope);
-  result.foam = clamp(crest * 0.62 + steepness * 0.38, 0.0, 1.0);
-  return result;
-}
+varying float vCompression;
+varying float vCurvature;
+varying float vWaveHeight;
 
 #include <fog_pars_vertex>
 
 void main() {
+  // PlaneGeometry is rotated -90 degrees around X by the mesh. Its local
+  // (x, -y) coordinates therefore map directly to world (x, z).
   vec2 oceanPosition = vec2(position.x, -position.y);
   OceanWaveSample wave = sampleOceanWave(oceanPosition, uTime);
+  vec2 displacedPosition = oceanPosition + wave.displacement;
+
   vec3 transformed = position;
-  // PlaneGeometry is rotated -90 degrees around X by the mesh.  Displacing
-  // local Z therefore moves the surface along world Y.
-  transformed.z = wave.height;
+  transformed.x = displacedPosition.x;
+  transformed.y = -displacedPosition.y;
+  transformed.z = OCEAN_SURFACE_LEVEL + wave.height;
+
+  // oceanNormal() is expressed in world rest axes (x, y, z). Convert it back
+  // to this plane's local basis before applying the model transform.
+  vec3 worldNormal = oceanNormal(wave);
+  vec3 localNormal = vec3(worldNormal.x, -worldNormal.z, worldNormal.y);
 
   vOceanPosition = oceanPosition;
   vFoam = wave.foam;
-  vNormal = normalize(normalMatrix * vec3(-wave.dx, wave.dz, 1.0));
+  vCompression = wave.compression;
+  vCurvature = wave.curvature / OCEAN_CURVATURE_SCALE;
+  vWaveHeight = wave.height;
+  vWorldNormal = normalize(mat3(modelMatrix) * localNormal);
   vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
 
   vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
@@ -104,44 +74,104 @@ uniform vec3 uSunDirection;
 uniform sampler2D uFoamMap;
 
 varying vec3 vWorldPosition;
-varying vec3 vNormal;
+varying vec3 vWorldNormal;
 varying vec2 vOceanPosition;
 varying float vFoam;
+varying float vCompression;
+varying float vCurvature;
+varying float vWaveHeight;
 
 #include <fog_pars_fragment>
 
+const float WATER_IOR = 1.333;
+const float WATER_F0 = 0.020373;
+
+float foamLuma(vec2 uv) {
+  return dot(texture2D(uFoamMap, uv).rgb, vec3(0.3333333));
+}
+
+vec3 skyRadiance(vec3 direction) {
+  vec3 skyDirection = normalize(direction);
+  float horizon = smoothstep(-0.12, 0.52, skyDirection.y);
+  vec3 horizonColor = vec3(0.35, 0.58, 0.65);
+  vec3 zenithColor = vec3(0.055, 0.15, 0.29);
+  vec3 sky = mix(horizonColor, zenithColor, horizon);
+
+  float sunAlignment = max(dot(skyDirection, normalize(uSunDirection)), 0.0);
+  sky += vec3(1.0, 0.72, 0.42) * pow(sunAlignment, 256.0) * 2.4;
+  sky += vec3(1.0, 0.43, 0.16) * pow(sunAlignment, 18.0) * 0.055;
+  return sky;
+}
+
 void main() {
-  vec3 normal = normalize(vNormal);
+  vec3 normal = normalize(vWorldNormal);
   vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
   vec3 sunDirection = normalize(uSunDirection);
 
-  float fresnel = pow(1.0 - max(dot(normal, viewDirection), 0.0), 3.4);
-  float facingSun = max(dot(normal, sunDirection), 0.0);
-  vec3 halfVector = normalize(viewDirection + sunDirection);
-  float facetAlignment = max(dot(normal, halfVector), 0.0);
-  float tightGlint = pow(facetAlignment, 52.0) * 0.48;
-  float broadGlint = pow(facetAlignment, 18.0) * 0.055;
+  // Two animated scales of the required breakup map supply sub-vertex
+  // roughness. Fade those normals in near the camera where geometry is too
+  // coarse to carry the fine chop and fade them out before aliasing begins.
+  float distanceToCamera = distance(cameraPosition, vWorldPosition);
+  float detailFade = 1.0 - smoothstep(15.0, 170.0, distanceToCamera);
+  vec2 broadUv = vOceanPosition * 0.64 + vec2(uTime * 0.014, -uTime * 0.010);
+  vec2 fineUv = vOceanPosition * 2.55 + vec2(-uTime * 0.033, uTime * 0.024);
+  vec2 broadStep = vec2(0.009, 0.0);
+  vec2 fineStep = vec2(0.018, 0.0);
+  float broadDx = foamLuma(broadUv + broadStep) - foamLuma(broadUv - broadStep);
+  float broadDz = foamLuma(broadUv + broadStep.yx) - foamLuma(broadUv - broadStep.yx);
+  float fineDx = foamLuma(fineUv + fineStep) - foamLuma(fineUv - fineStep);
+  float fineDz = foamLuma(fineUv + fineStep.yx) - foamLuma(fineUv - fineStep.yx);
+  vec3 reference = abs(normal.y) < 0.92 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+  vec3 tangent = normalize(cross(reference, normal));
+  vec3 bitangent = normalize(cross(normal, tangent));
+  vec2 microSlope = vec2(broadDx * 0.72 + fineDx * 0.38, broadDz * 0.72 + fineDz * 0.38);
+  normal = normalize(normal + (tangent * microSlope.x + bitangent * microSlope.y) * detailFade);
 
-  vec3 deepTeal = vec3(0.008, 0.095, 0.14);
-  vec3 coastalTeal = vec3(0.018, 0.245, 0.31);
-  vec3 waterColor = mix(deepTeal, coastalTeal, clamp(normal.y * 0.8 + 0.2, 0.0, 1.0));
-  waterColor = mix(waterColor, vec3(0.045, 0.31, 0.36), fresnel * 0.58);
-  waterColor += vec3(0.10, 0.14, 0.12) * facingSun * 0.11;
+  // Fresnel-Schlick for the air/water interface. F0 is derived from the
+  // water IOR (roughly ((1.0 - 1.333) / (1.0 + 1.333))^2).
+  float cosTheta = clamp(dot(normal, viewDirection), 0.0, 1.0);
+  float fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - cosTheta, 5.0);
+  vec3 reflectedDirection = normalize(reflect(-viewDirection, normal));
+  vec3 reflectedSky = skyRadiance(reflectedDirection);
 
+  // Use the wave height as a depth proxy for a finite water column: troughs
+  // read denser and bluer while crests receive more transmitted sky color.
+  float shallowFactor = smoothstep(-0.78, 0.38, vWaveHeight);
+  float waterDepth = mix(1.85, 0.58, shallowFactor);
+  vec3 shallowColor = vec3(0.018, 0.19, 0.27);
+  vec3 deepColor = vec3(0.006, 0.048, 0.095);
+  vec3 bodyColor = mix(deepColor, shallowColor, shallowFactor);
+  vec3 absorption = exp(-vec3(0.31, 0.86, 1.42) * waterDepth);
+  vec3 transmittedWater = bodyColor * (0.62 + absorption * 0.78);
+  vec3 waterColor = mix(transmittedWater, reflectedSky, fresnel);
+
+  // Breakup follows compressed/curved crests, not height alone. The map
+  // modulates the analytic signal into irregular patches and dissipating
+  // streaks instead of a uniform white band.
   vec2 foamUv = vOceanPosition * vec2(0.105, 0.14)
     + vec2(uTime * 0.009, -uTime * 0.006);
   vec3 breakupA = texture2D(uFoamMap, foamUv).rgb;
-  vec3 breakupB = texture2D(uFoamMap, foamUv * 1.71 - vec2(uTime * 0.003, uTime * 0.004)).rgb;
-  float breakup = mix(dot(breakupA, vec3(0.3333)), dot(breakupB, vec3(0.3333)), 0.42);
-  breakup = smoothstep(0.57, 0.86, breakup);
-  float foam = clamp(vFoam * (0.12 + breakup * 0.54), 0.0, 1.0);
-  vec3 foamColor = mix(vec3(0.24, 0.54, 0.58), vec3(0.76, 0.88, 0.86), breakup);
-  waterColor = mix(waterColor, foamColor, foam * 0.48);
+  vec3 breakupB = texture2D(
+    uFoamMap,
+    foamUv * 1.71 - vec2(uTime * 0.003, uTime * 0.004)
+  ).rgb;
+  float breakup = mix(dot(breakupA, vec3(0.3333333)), dot(breakupB, vec3(0.3333333)), 0.42);
+  breakup = smoothstep(0.52, 0.84, breakup);
+  float foam = clamp(vFoam * (0.10 + breakup * 0.76) + vCompression * 0.12, 0.0, 1.0);
+  vec3 foamColor = mix(vec3(0.23, 0.54, 0.62), vec3(0.82, 0.94, 0.92), breakup);
+  waterColor = mix(waterColor, foamColor, foam * 0.54);
 
-  waterColor += vec3(1.0, 0.70, 0.36) * (tightGlint + broadGlint);
-  waterColor = pow(max(waterColor, 0.0), vec3(0.92));
+  // A restrained, broad-plus-tight sun glint keeps the highlight tied to the
+  // same physical half-vector without turning the whole ocean metallic.
+  vec3 halfVector = normalize(viewDirection + sunDirection);
+  float facetAlignment = max(dot(normal, halfVector), 0.0);
+  float broadGlint = pow(facetAlignment, 42.0) * 0.026;
+  float tightGlint = pow(facetAlignment, 180.0) * 0.16;
+  waterColor += vec3(1.0, 0.70, 0.34) * (broadGlint + tightGlint);
 
-  gl_FragColor = vec4(waterColor, 1.0);
+  gl_FragColor = vec4(max(waterColor, 0.0), 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
   #include <fog_fragment>
 }
 `;
@@ -278,8 +308,8 @@ export function createOceanFeature(): RuntimeFeature {
         };
 
         const oceanMaterial = new THREE.ShaderMaterial({
-          // Fog uniforms are cloned per material; custom uniform records stay
-          // shared with the feature so update() can mutate their live values.
+          // Fog and color-management uniforms are cloned per material; custom
+          // uniforms stay shared with the feature so update() mutates live values.
           uniforms: {
             ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
             ...oceanUniforms,
@@ -290,6 +320,7 @@ export function createOceanFeature(): RuntimeFeature {
           fog: true,
           depthWrite: true,
           depthTest: true,
+          toneMapped: true,
         });
         const oceanGeometry = new THREE.PlaneGeometry(OCEAN_SIZE, OCEAN_SIZE, OCEAN_SEGMENTS, OCEAN_SEGMENTS);
         const ocean = new THREE.Mesh(oceanGeometry, oceanMaterial);
