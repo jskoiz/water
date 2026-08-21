@@ -1419,10 +1419,11 @@ class RaftController {
         const life = 0.48;
         if (age >= 0 && age < life) {
           const travel = age / life;
-          const dist = 0.42 + particle.burstStrength * 0.55;
+          const dist = 0.72 + particle.burstStrength * 0.65;
+          const arc = travel * (1.0 - travel) * 4.0;
           particle.mesh.position.set(
             particle.burstOriginX + particle.burstDirX * travel * dist,
-            particle.burstOriginY + particle.burstDirY * travel * dist,
+            particle.burstOriginY + particle.burstDirY * travel * dist + arc * 0.28,
             particle.burstOriginZ + particle.burstDirZ * travel * dist,
           );
           particle.mesh.visible = true;
@@ -1569,12 +1570,15 @@ class RaftController {
     const heave = Math.abs(this.heaveVelocity);
     const speed = this.speedMetersPerSecond;
     for (let index = 0; index < this.sampleOffsets.length; index += 1) {
+      if (index > 2) {
+        continue;
+      }
       const signal = Math.max(heave, this.sampleCompressions[index] * speed);
       if (signal <= 0.85 || elapsedSeconds - this.contactBurstAt[index] < 0.28) {
         continue;
       }
       this.contactBurstAt[index] = elapsedSeconds;
-      const count = Math.floor(3 + 8 * signal);
+      const count = Math.floor(5 + 10 * signal);
       const offset = this.sampleOffsets[index];
       for (let n = 0; n < count; n += 1) {
         const particle = this.sprayParticles[this.sprayEmitIndex % this.sprayParticles.length];
@@ -1583,11 +1587,11 @@ class RaftController {
         particle.bursting = true;
         particle.burstStart = elapsedSeconds;
         particle.burstOriginX = offset.x + jitter;
-        particle.burstOriginY = 0.08;
+        particle.burstOriginY = 0.22;
         particle.burstOriginZ = offset.z;
-        particle.burstDirX = 0;
-        particle.burstDirY = 0.70710678;
-        particle.burstDirZ = 0.70710678;
+        particle.burstDirX = jitter * 0.8;
+        particle.burstDirY = 0.88;
+        particle.burstDirZ = -0.47;
         particle.burstStrength = signal;
       }
     }
