@@ -942,7 +942,7 @@ class RaftController {
       alphaTest: 0.02,
       depthWrite: false,
     }));
-    const sprayGeometry = this.registerGeometry(new THREE.SphereGeometry(0.034, 10, 6));
+    const sprayGeometry = this.registerGeometry(new THREE.SphereGeometry(0.038, 10, 6));
     for (let index = 0; index < 24; index += 1) {
       const spread = (index % 8) / 7;
       const side = index % 2 === 0 ? -1 : 1;
@@ -960,7 +960,7 @@ class RaftController {
         baseZ,
         phase: index * 0.71,
         spread,
-        size: 0.3 + (index % 5) * 0.055,
+        size: 0.52 + (index % 5) * 0.11,
         bursting: false,
         burstStart: 0,
         burstOriginX: baseX,
@@ -1416,7 +1416,7 @@ class RaftController {
     for (const particle of this.sprayParticles) {
       if (particle.bursting) {
         const age = elapsedSeconds - particle.burstStart;
-        const life = 0.48;
+        const life = 0.3;
         if (age >= 0 && age < life) {
           const travel = age / life;
           const dist = 0.42 + particle.burstStrength * 0.55;
@@ -1572,17 +1572,17 @@ class RaftController {
       const bow = index < 3;
       const signal = Math.max(heave, this.sampleCompressions[index] * speed);
       const gate = bow ? 0.4 : 0.85;
-      const cooldown = bow ? 0.18 : 0.28;
+      const cooldown = bow ? 0.12 : 0.28;
       if (signal <= gate || elapsedSeconds - this.contactBurstAt[index] < cooldown) {
         continue;
       }
       this.contactBurstAt[index] = elapsedSeconds;
-      const count = Math.floor(bow ? 10 + 14 * signal : 3 + 8 * signal);
+      const count = Math.floor(bow ? 12 + 14 * signal : 3 + 8 * signal);
       const offset = this.sampleOffsets[index];
       for (let n = 0; n < count; n += 1) {
         const particle = this.sprayParticles[this.sprayEmitIndex % this.sprayParticles.length];
         this.sprayEmitIndex += 1;
-        const jitter = (n - (count - 1) * 0.5) * 0.05;
+        const jitter = (n - (count - 1) * 0.5) * 0.04;
         particle.bursting = true;
         particle.burstStart = elapsedSeconds;
         particle.burstOriginX = offset.x + jitter;
