@@ -886,6 +886,20 @@ class RaftController {
       wake.renderOrder = 1;
       this.wakeGroup.add(wake);
     }
+    for (const side of [-1, 1]) {
+      const volumeGeometry = this.createWakeRibbonGeometry(
+        WAKE_SECTIONS.map((section) => ({
+          ...section,
+          x: section.x * side,
+          width: section.width * 1.7,
+          alpha: section.alpha * 0.55,
+        })),
+      );
+      const volume = new THREE.Mesh(volumeGeometry, wakeMaterial);
+      volume.position.y = 0.11;
+      volume.renderOrder = 1;
+      this.wakeGroup.add(volume);
+    }
 
     if (!this.foamBreakupTexture) {
       throw new Error('Foam breakup texture must be loaded before building hull foam.');
@@ -953,7 +967,7 @@ class RaftController {
       this.contactRings.push(ring);
     }
 
-    const torusGeometry = this.registerGeometry(new THREE.TorusGeometry(1.15, 0.42, 10, 28));
+    const torusGeometry = this.registerGeometry(new THREE.TorusGeometry(1.15, 0.40, 10, 28));
     torusGeometry.rotateX(-Math.PI / 2);
     const torusMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
       color: 0xf0f2eb,
@@ -968,7 +982,7 @@ class RaftController {
     }));
     const torus = new THREE.Mesh(torusGeometry, torusMaterial);
     torus.position.y = 0.08;
-    torus.scale.set(1, 0.35, 1);
+    torus.scale.set(1.7, 0.35, 2.4);
     torus.renderOrder = 4;
     this.contactFoamGroup.add(torus);
     this.hullFoamTorus = torus;
