@@ -267,19 +267,13 @@ void main() {
   vec3 foamColor = mix(vec3(0.16, 0.37, 0.42), vec3(0.72, 0.85, 0.81), breakup);
   waterColor = mix(waterColor, foamColor, foam * 0.52);
 
-  // A restrained, broad-plus-tight sun glint keeps the highlight tied to the
-  // same physical half-vector without turning the whole ocean metallic.
+  // Binary flake gate on Gerstner facets. No floor mix — glitter is off or on.
   vec3 halfVector = normalize(viewDirection + sunDirection);
   float facetAlignment = max(dot(normal, halfVector), 0.0);
-  vec2 sparkleUv = vOceanPosition * vec2(0.032, 0.047)
-    + vec2(uTime * 0.006, -uTime * 0.004);
-  float sparkleNoise = foamLuma(sparkleUv);
-  float sparkleMask = smoothstep(0.58, 0.84, sparkleNoise);
-  float sunFacet = smoothstep(0.05, 0.55, max(dot(normal, sunDirection), 0.0));
-  float brokenSunPath = mix(0.14, 1.0, sparkleMask) * mix(0.45, 1.0, sunFacet);
-  float broadGlint = pow(facetAlignment, 48.0) * 0.035;
-  float tightGlint = pow(facetAlignment, 120.0) * 0.14;
-  waterColor += vec3(1.0, 0.70, 0.34) * (broadGlint + tightGlint) * brokenSunPath;
+  vec2 cell = floor(vOceanPosition * 2.8);
+  float flake = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
+  float glitter = step(0.74, flake) * step(0.88, facetAlignment) * pow(facetAlignment, 80.0) * 0.55;
+  waterColor += vec3(1.0, 0.70, 0.34) * glitter;
 
   gl_FragColor = vec4(max(waterColor, 0.0), 1.0);
   #include <tonemapping_fragment>
