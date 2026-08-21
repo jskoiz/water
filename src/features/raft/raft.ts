@@ -42,6 +42,8 @@ const MAX_PITCH = 0.45;
 const MAX_ROLL = 0.52;
 const CONTACT_HALF_WIDTH = 1.25;
 const CONTACT_HALF_LENGTH = 2.05;
+const WATERLINE_LOOP = [0, 1, 2, 5, 8, 7, 6, 3] as const;
+const WATERLINE_WIDTH = 0.55;
 const HEAVE_EQUILIBRIUM_OFFSET = -0.12;
 const MAX_HEAVE_DEVIATION = 0.72;
 const MAX_HEAVE_VELOCITY = 3.2;
@@ -377,7 +379,9 @@ class RaftController {
   private readonly wakeGroup = new THREE.Group();
   private readonly contactFoamGroup = new THREE.Group();
   private readonly contactRings: THREE.Mesh[] = [];
-  private hullFoamCollar: THREE.Group | null = null;
+  private waterlineRibbon: THREE.Mesh | null = null;
+  private waterlinePositions: Float32Array | null = null;
+  private readonly waterlinePoints = new Float32Array(WATERLINE_LOOP.length * 3);
   private hullFoamMaterial: THREE.MeshBasicMaterial | null = null;
   private readonly sampleOffsets = [
     // A symmetric 3x3 contact stencil gives the hull a centerline keel and
@@ -546,7 +550,8 @@ class RaftController {
     this.raftGroup.removeFromParent();
     this.contactFoamGroup.removeFromParent();
     this.contactRings.length = 0;
-    this.hullFoamCollar = null;
+    this.waterlineRibbon = null;
+    this.waterlinePositions = null;
     this.hullFoamMaterial = null;
     for (const geometry of this.geometries) {
       geometry.dispose();
@@ -979,7 +984,7 @@ class RaftController {
       this.contactRings.push(ring);
     }
 
-    const collarMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
+    const waterlineMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
       color: 0xf0f2eb,
       map: this.foamBreakupTexture,
       transparent: true,
@@ -990,19 +995,31 @@ class RaftController {
       fog: true,
       side: THREE.DoubleSide,
     }));
-    const sideGeometry = this.registerGeometry(new THREE.CylinderGeometry(0.38, 0.38, 4.4, 12));
-    sideGeometry.rotateX(Math.PI / 2);
-    const collar = new THREE.Group();
-    for (const side of [-1, 1]) {
-      const logFoam = new THREE.Mesh(sideGeometry, collarMaterial);
-      logFoam.position.set(1.35 * side, 0.08, 0);
-      logFoam.scale.set(1, 0.35, 1);
-      logFoam.renderOrder = 4;
-      collar.add(logFoam);
+    const pointCount = WATERLINE_LOOP.length;
+    const positions = new Float32Array(pointCount * 2 * 3);
+    const uvs = new Float32Array(pointCount * 2 * 2);
+    const indices: number[] = [];
+    for (let index = 0; index < pointCount; index += 1) {
+      const u = index / pointCount;
+      uvs[index * 4] = u;
+      uvs[index * 4 + 1] = 0;
+      uvs[index * 4 + 2] = u;
+      uvs[index * 4 + 3] = 1;
+      const current = index * 2;
+      const next = ((index + 1) % pointCount) * 2;
+      indices.push(current, current + 1, next + 1, current, next + 1, next);
     }
-    this.contactFoamGroup.add(collar);
-    this.hullFoamCollar = collar;
-    this.hullFoamMaterial = collarMaterial;
+    const geometry = this.registerGeometry(new THREE.BufferGeometry());
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+    const ribbon = new THREE.Mesh(geometry, waterlineMaterial);
+    ribbon.frustumCulled = false;
+    ribbon.renderOrder = 4;
+    this.contactFoamGroup.add(ribbon);
+    this.waterlineRibbon = ribbon;
+    this.waterlinePositions = positions;
+    this.hullFoamMaterial = waterlineMaterial;
   }
 
   private createWakeRibbonGeometry(sections: readonly WakeSection[]): THREE.BufferGeometry {
@@ -1456,16 +1473,41 @@ class RaftController {
       ring.visible = false;
       wetFloor += alpha;
       surfaceHeight += height;
+      const loopIndex = WATERLINE_LOOP.indexOf(index as typeof WATERLINE_LOOP[number]);
+      if (loopIndex >= 0) {
+        this.waterlinePoints[loopIndex * 3] = this.sampleWorldPosition.x;
+        this.waterlinePoints[loopIndex * 3 + 1] = height + 0.04;
+        this.waterlinePoints[loopIndex * 3 + 2] = this.sampleWorldPosition.z;
+      }
     }
-    const collar = this.hullFoamCollar;
-    const collarMaterial = this.hullFoamMaterial;
-    if (collar && collarMaterial) {
+    const ribbon = this.waterlineRibbon;
+    const ribbonPositions = this.waterlinePositions;
+    const ribbonMaterial = this.hullFoamMaterial;
+    if (ribbon && ribbonPositions && ribbonMaterial) {
       const meanAlpha = wetFloor / this.sampleOffsets.length;
-      const meanHeight = surfaceHeight / this.sampleOffsets.length;
-      collar.position.set(this.positionX, meanHeight, this.positionZ);
-      collar.rotation.y = this.heading;
-      collar.visible = meanAlpha > 0.02;
-      collarMaterial.opacity = 0.22 + 0.58 * meanAlpha;
+      const halfWidth = WATERLINE_WIDTH * 0.5;
+      const count = WATERLINE_LOOP.length;
+      for (let index = 0; index < count; index += 1) {
+        const prev = (index + count - 1) % count;
+        const next = (index + 1) % count;
+        const tangentX = this.waterlinePoints[next * 3] - this.waterlinePoints[prev * 3];
+        const tangentZ = this.waterlinePoints[next * 3 + 2] - this.waterlinePoints[prev * 3 + 2];
+        const length = Math.hypot(tangentX, tangentZ) || 1;
+        const normalX = -tangentZ / length;
+        const normalZ = tangentX / length;
+        const x = this.waterlinePoints[index * 3];
+        const y = this.waterlinePoints[index * 3 + 1];
+        const z = this.waterlinePoints[index * 3 + 2];
+        ribbonPositions[index * 6] = x - normalX * halfWidth;
+        ribbonPositions[index * 6 + 1] = y;
+        ribbonPositions[index * 6 + 2] = z - normalZ * halfWidth;
+        ribbonPositions[index * 6 + 3] = x + normalX * halfWidth;
+        ribbonPositions[index * 6 + 4] = y;
+        ribbonPositions[index * 6 + 5] = z + normalZ * halfWidth;
+      }
+      ribbon.geometry.getAttribute('position').needsUpdate = true;
+      ribbon.visible = meanAlpha > 0.02;
+      ribbonMaterial.opacity = 0.22 + 0.58 * meanAlpha;
     }
     this.emitContactSpray(elapsedSeconds);
   }
