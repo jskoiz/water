@@ -938,7 +938,7 @@ class RaftController {
       emissive: 0x173d43,
       emissiveIntensity: 0.04,
       transparent: true,
-      opacity: 0.4,
+      opacity: 0.22,
       alphaTest: 0.02,
       depthWrite: false,
     }));
@@ -1419,15 +1419,15 @@ class RaftController {
         const life = 0.3;
         if (age >= 0 && age < life) {
           const travel = age / life;
-          const dist = 0.42 + particle.burstStrength * 0.55;
+          const dist = 0.62 + particle.burstStrength * 0.7;
           particle.mesh.position.set(
             particle.burstOriginX + particle.burstDirX * travel * dist,
             particle.burstOriginY + particle.burstDirY * travel * dist,
             particle.burstOriginZ + particle.burstDirZ * travel * dist,
           );
           particle.mesh.visible = true;
-          const size = particle.size * (0.5 + particle.burstStrength * 0.35) * (1 - travel);
-          particle.mesh.scale.set(size * 0.62, size, size * 0.48);
+          const size = particle.size * (0.5 + particle.burstStrength * 0.35) * (1 - travel * 0.55);
+          particle.mesh.scale.set(size * 0.22, size * 2.6, size * 0.18);
           continue;
         }
         particle.bursting = false;
@@ -1439,7 +1439,7 @@ class RaftController {
         + impactFactor * 1.45
       ) + particle.phase * 0.14) % 1;
       const dissipation = 1 - travel;
-      const launchHeight = (0.14 + speedFactor * 0.2 + impactFactor * 0.56) * 1.8;
+      const launchHeight = (0.14 + speedFactor * 0.2 + impactFactor * 0.56) * 2.4;
       const launchDistance = 0.68 + speedFactor * 1.2 + impactFactor * 1.45;
       particle.mesh.position.x = particle.baseX
         + Math.sin(phase) * (0.08 + speedFactor * 0.04 + impactFactor * 0.1);
@@ -1453,9 +1453,9 @@ class RaftController {
         * (0.24 + sprayStrength * 0.68)
         * (0.36 + dissipation * 0.64);
       particle.mesh.scale.set(
-        size * (0.58 + particle.spread * 0.14),
-        size * (0.92 + impactFactor * 0.48),
-        size * (0.44 + speedFactor * 0.28),
+        size * (0.22 + particle.spread * 0.08),
+        size * (2.15 + impactFactor * 0.7),
+        size * (0.18 + speedFactor * 0.1),
       );
     }
 
@@ -1586,11 +1586,11 @@ class RaftController {
         particle.bursting = true;
         particle.burstStart = elapsedSeconds;
         particle.burstOriginX = offset.x + jitter;
-        particle.burstOriginY = 0.08;
+        particle.burstOriginY = 0.16;
         particle.burstOriginZ = offset.z;
         particle.burstDirX = 0;
-        particle.burstDirY = bow ? 0.85 : 0.70710678;
-        particle.burstDirZ = bow ? 0.53 : 0.70710678;
+        particle.burstDirY = bow ? 0.96 : 0.70710678;
+        particle.burstDirZ = bow ? 0.28 : 0.70710678;
         particle.burstStrength = signal;
       }
     }
