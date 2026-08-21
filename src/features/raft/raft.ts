@@ -26,6 +26,17 @@ const WIND_DIR_Z = WIND_SEA_Z / WIND_SEA_LENGTH;
 const WIND_SPEED_MPS = 4.2;
 const SAIL_RUN_SPEED = 3.35;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
+
+function initialHeadingFromUrl(): number {
+  if (typeof window === 'undefined') {
+    return 0;
+  }
+  if (new URLSearchParams(window.location.search).get('run') !== '1') {
+    return 0;
+  }
+  // Forward (sin θ, -cos θ) matches D0 so the still is a run, not a beat.
+  return Math.atan2(WIND_SEA_X, -WIND_SEA_Z);
+}
 const MAX_PITCH = 0.45;
 const MAX_ROLL = 0.52;
 const CONTACT_HALF_WIDTH = 1.25;
@@ -400,7 +411,7 @@ class RaftController {
   private positionX = 0;
   private positionY = 0;
   private positionZ = 0;
-  private heading = 0;
+  private heading = initialHeadingFromUrl();
   private speedMetersPerSecond = 0;
   private leewayMetersPerSecond = 0;
   private sailPower = 0.72;
