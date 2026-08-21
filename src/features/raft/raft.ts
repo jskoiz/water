@@ -41,6 +41,17 @@ const MAX_PITCH = 0.45;
 const MAX_ROLL = 0.52;
 const CONTACT_HALF_WIDTH = 1.25;
 const CONTACT_HALF_LENGTH = 2.05;
+const CONTACT_FOAM_PER_SAMPLE = 8;
+const CONTACT_FOAM_SCATTER = [
+  { x: 0.25, z: 0.00, y: 0.06 },
+  { x: 0.18, z: 0.32, y: 0.14 },
+  { x: -0.12, z: 0.55, y: 0.09 },
+  { x: -0.62, z: 0.28, y: 0.18 },
+  { x: -0.85, z: 0.00, y: 0.11 },
+  { x: -0.48, z: -0.38, y: 0.20 },
+  { x: 0.08, z: -0.72, y: 0.07 },
+  { x: 0.58, z: -0.22, y: 0.16 },
+] as const;
 const HEAVE_EQUILIBRIUM_OFFSET = -0.12;
 const MAX_HEAVE_DEVIATION = 0.72;
 const MAX_HEAVE_VELOCITY = 3.2;
@@ -363,6 +374,9 @@ class RaftController {
   private readonly wakeGroup = new THREE.Group();
   private readonly contactFoamGroup = new THREE.Group();
   private readonly contactRings: THREE.Mesh[] = [];
+  private contactFoamVolume: THREE.InstancedMesh | null = null;
+  private readonly foamDummy = new THREE.Object3D();
+  private readonly foamColor = new THREE.Color(0xeef8f8);
   private readonly sampleOffsets = [
     // A symmetric 3x3 contact stencil gives the hull a centerline keel and
     // midship contacts in addition to the four corners. It reacts to local
@@ -523,6 +537,7 @@ class RaftController {
     this.raftGroup.removeFromParent();
     this.contactFoamGroup.removeFromParent();
     this.contactRings.length = 0;
+    this.contactFoamVolume = null;
     for (const geometry of this.geometries) {
       geometry.dispose();
     }
@@ -928,6 +943,26 @@ class RaftController {
       this.contactFoamGroup.add(ring);
       this.contactRings.push(ring);
     }
+
+    const foamGeometry = this.registerGeometry(new THREE.SphereGeometry(0.11, 8, 6));
+    const foamMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
+      color: 0xeef8f8,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+      fog: true,
+    }));
+    const volume = new THREE.InstancedMesh(
+      foamGeometry,
+      foamMaterial,
+      this.sampleOffsets.length * CONTACT_FOAM_PER_SAMPLE,
+    );
+    volume.frustumCulled = false;
+    volume.renderOrder = 4;
+    this.contactFoamGroup.add(volume);
+    this.contactFoamVolume = volume;
   }
 
   private createWakeRibbonGeometry(sections: readonly WakeSection[]): THREE.BufferGeometry {
@@ -1380,6 +1415,36 @@ class RaftController {
       const material = ring.material;
       if (material instanceof THREE.MeshBasicMaterial) {
         material.opacity = alpha * 0.92;
+      }
+
+      const volume = this.contactFoamVolume;
+      if (volume) {
+        const headingCos = Math.cos(this.heading);
+        const headingSin = Math.sin(this.heading);
+        const bubbleScale = alpha > 0.02 ? 0.42 + 1.05 * alpha : 0;
+        this.foamColor.setHex(0xeef8f8).multiplyScalar(0.45 + 0.55 * alpha);
+        for (let bubble = 0; bubble < CONTACT_FOAM_PER_SAMPLE; bubble += 1) {
+          const scatter = CONTACT_FOAM_SCATTER[bubble];
+          const bob = 0.03 * Math.sin(elapsedSeconds * 2.35 + index * 1.7 + bubble * 0.85);
+          const localX = scatter.x * headingCos - scatter.z * headingSin;
+          const localZ = scatter.x * headingSin + scatter.z * headingCos;
+          this.foamDummy.position.set(
+            this.sampleWorldPosition.x + localX,
+            height + scatter.y + bob,
+            this.sampleWorldPosition.z + localZ,
+          );
+          this.foamDummy.scale.setScalar(bubbleScale);
+          this.foamDummy.updateMatrix();
+          const instanceIndex = index * CONTACT_FOAM_PER_SAMPLE + bubble;
+          volume.setMatrixAt(instanceIndex, this.foamDummy.matrix);
+          volume.setColorAt(instanceIndex, this.foamColor);
+        }
+      }
+    }
+    if (this.contactFoamVolume) {
+      this.contactFoamVolume.instanceMatrix.needsUpdate = true;
+      if (this.contactFoamVolume.instanceColor) {
+        this.contactFoamVolume.instanceColor.needsUpdate = true;
       }
     }
     this.emitContactSpray(elapsedSeconds);
