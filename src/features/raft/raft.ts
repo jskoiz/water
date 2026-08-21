@@ -416,6 +416,7 @@ class RaftController {
   private readonly sprayParticles: SprayParticle[] = [];
   private readonly plumeCards: THREE.Mesh[] = [];
   private readonly plumeOpacities: { value: number }[] = [];
+  private bowWet = 0;
   private readonly sampleCompressions = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   private readonly contactBurstAt = [-1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9];
   private sprayEmitIndex = 0;
@@ -1420,8 +1421,15 @@ class RaftController {
       this.wakeUniforms.uStrength.value = wakeStrength;
     }
 
-    for (const card of this.plumeCards) {
-      card.visible = false;
+    const burst = this.bowWet > 0.22 ? 1 : 0;
+    const pulse = 1.0 + 0.25 * Math.sin(elapsedSeconds * 8.2) * burst;
+    const opacity = 0.38 * this.bowWet;
+    for (let index = 0; index < this.plumeCards.length; index += 1) {
+      const card = this.plumeCards[index];
+      card.visible = this.bowWet > 0.04;
+      card.position.y = 0.74 + this.bowWet * 0.16;
+      card.scale.setScalar(pulse);
+      this.plumeOpacities[index].value = opacity;
     }
 
     this.updateContactFoam(elapsedSeconds);
@@ -1445,6 +1453,7 @@ class RaftController {
       this.waterlineRibbon.visible = false;
     }
     let wetFloor = 0;
+    let bowWet = 0;
     let surfaceHeight = 0;
     for (let index = 0; index < this.sampleOffsets.length; index += 1) {
       const offset = this.sampleOffsets[index];
@@ -1481,6 +1490,9 @@ class RaftController {
       ring.scale.setScalar(radius);
       ring.visible = false;
       wetFloor += alpha;
+      if (index < 3) {
+        bowWet += alpha;
+      }
       surfaceHeight += height;
       const loopIndex = WATERLINE_LOOP.indexOf(index as typeof WATERLINE_LOOP[number]);
       if (loopIndex >= 0) {
@@ -1497,6 +1509,7 @@ class RaftController {
         radius: loop < 3 ? 1.85 : 1.15,
       });
     }
+    this.bowWet = bowWet / 3;
     const meanAlpha = wetFloor / this.sampleOffsets.length;
     ocean.setHullFoam(contacts, meanAlpha);
     const ribbon = this.waterlineRibbon;
