@@ -626,14 +626,18 @@ class RaftController {
       emissiveIntensity: 0.07,
     }));
 
-    const plankGeometry = this.registerGeometry(new THREE.BoxGeometry(0.36, 0.32, 4.75, 1, 1, 8));
+    const logGeometry = this.registerGeometry(new THREE.CylinderGeometry(0.17, 0.17, 4.75, 12));
     for (let index = 0; index < 9; index += 1) {
-      const plank = new THREE.Mesh(plankGeometry, woodMaterial);
-      plank.position.set(-1.44 + index * 0.36, 0, (index % 2 === 0 ? -1 : 1) * 0.025);
-      plank.rotation.z = Math.sin(index * 2.7) * 0.012;
-      plank.castShadow = true;
-      plank.receiveShadow = true;
-      this.raftGroup.add(plank);
+      const log = new THREE.Mesh(logGeometry, woodMaterial);
+      const radius = 0.16 + (index % 3) * 0.01;
+      const radialScale = radius / 0.17;
+      log.scale.set(radialScale, 1, radialScale);
+      log.position.set(-1.44 + index * 0.36, 0, (index % 2 === 0 ? -1 : 1) * 0.025);
+      log.rotation.x = -Math.PI / 2;
+      log.rotation.z = Math.sin(index * 2.7) * 0.012;
+      log.castShadow = true;
+      log.receiveShadow = true;
+      this.raftGroup.add(log);
     }
 
     const crossBeamGeometry = this.registerGeometry(new THREE.CylinderGeometry(0.14, 0.17, 3.8, 10));
@@ -709,7 +713,7 @@ class RaftController {
 
     const crateGeometry = this.registerGeometry(new THREE.BoxGeometry(0.86, 0.62, 0.92));
     const crate = new THREE.Mesh(crateGeometry, darkWoodMaterial);
-    crate.position.set(0.82, 0.52, 0.85);
+    crate.position.set(0.82, 0.54, 0.85);
     crate.rotation.y = -0.14;
     crate.castShadow = true;
     crate.receiveShadow = true;
