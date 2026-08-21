@@ -377,7 +377,7 @@ class RaftController {
   private readonly wakeGroup = new THREE.Group();
   private readonly contactFoamGroup = new THREE.Group();
   private readonly contactRings: THREE.Mesh[] = [];
-  private hullFoamTorus: THREE.Mesh | null = null;
+  private hullFoamCollar: THREE.Group | null = null;
   private hullFoamMaterial: THREE.MeshBasicMaterial | null = null;
   private readonly sampleOffsets = [
     // A symmetric 3x3 contact stencil gives the hull a centerline keel and
@@ -546,7 +546,7 @@ class RaftController {
     this.raftGroup.removeFromParent();
     this.contactFoamGroup.removeFromParent();
     this.contactRings.length = 0;
-    this.hullFoamTorus = null;
+    this.hullFoamCollar = null;
     this.hullFoamMaterial = null;
     for (const geometry of this.geometries) {
       geometry.dispose();
@@ -900,6 +900,18 @@ class RaftController {
       volume.renderOrder = 1;
       this.wakeGroup.add(volume);
     }
+    const fillGeometry = this.createWakeRibbonGeometry(
+      WAKE_SECTIONS.map((section, index) => ({
+        x: 0,
+        z: section.z,
+        width: 0.6 + 1.6 * (index / Math.max(WAKE_SECTIONS.length - 1, 1)),
+        alpha: 0.4,
+      })),
+    );
+    const fill = new THREE.Mesh(fillGeometry, wakeMaterial);
+    fill.position.y = 0.08;
+    fill.renderOrder = 1;
+    this.wakeGroup.add(fill);
 
     if (!this.foamBreakupTexture) {
       throw new Error('Foam breakup texture must be loaded before building hull foam.');
@@ -967,9 +979,7 @@ class RaftController {
       this.contactRings.push(ring);
     }
 
-    const torusGeometry = this.registerGeometry(new THREE.TorusGeometry(1.15, 0.40, 10, 28));
-    torusGeometry.rotateX(-Math.PI / 2);
-    const torusMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
+    const collarMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
       color: 0xf0f2eb,
       map: this.foamBreakupTexture,
       transparent: true,
@@ -980,13 +990,19 @@ class RaftController {
       fog: true,
       side: THREE.DoubleSide,
     }));
-    const torus = new THREE.Mesh(torusGeometry, torusMaterial);
-    torus.position.y = 0.08;
-    torus.scale.set(1.7, 0.35, 2.4);
-    torus.renderOrder = 4;
-    this.contactFoamGroup.add(torus);
-    this.hullFoamTorus = torus;
-    this.hullFoamMaterial = torusMaterial;
+    const sideGeometry = this.registerGeometry(new THREE.CylinderGeometry(0.38, 0.38, 4.4, 12));
+    sideGeometry.rotateX(Math.PI / 2);
+    const collar = new THREE.Group();
+    for (const side of [-1, 1]) {
+      const logFoam = new THREE.Mesh(sideGeometry, collarMaterial);
+      logFoam.position.set(1.35 * side, 0.08, 0);
+      logFoam.scale.set(1, 0.35, 1);
+      logFoam.renderOrder = 4;
+      collar.add(logFoam);
+    }
+    this.contactFoamGroup.add(collar);
+    this.hullFoamCollar = collar;
+    this.hullFoamMaterial = collarMaterial;
   }
 
   private createWakeRibbonGeometry(sections: readonly WakeSection[]): THREE.BufferGeometry {
@@ -1441,15 +1457,15 @@ class RaftController {
       wetFloor += alpha;
       surfaceHeight += height;
     }
-    const torus = this.hullFoamTorus;
-    const torusMaterial = this.hullFoamMaterial;
-    if (torus && torusMaterial) {
+    const collar = this.hullFoamCollar;
+    const collarMaterial = this.hullFoamMaterial;
+    if (collar && collarMaterial) {
       const meanAlpha = wetFloor / this.sampleOffsets.length;
       const meanHeight = surfaceHeight / this.sampleOffsets.length;
-      torus.position.set(this.positionX, meanHeight + 0.08, this.positionZ);
-      torus.rotation.y = this.heading;
-      torus.visible = meanAlpha > 0.02;
-      torusMaterial.opacity = 0.22 + 0.58 * meanAlpha;
+      collar.position.set(this.positionX, meanHeight, this.positionZ);
+      collar.rotation.y = this.heading;
+      collar.visible = meanAlpha > 0.02;
+      collarMaterial.opacity = 0.22 + 0.58 * meanAlpha;
     }
     this.emitContactSpray(elapsedSeconds);
   }
