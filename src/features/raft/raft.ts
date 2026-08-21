@@ -731,7 +731,7 @@ class RaftController {
   private buildWake(): void {
     const wakeUniforms = {
       uColor: { value: new THREE.Color(0x6fc4c9) },
-      uOpacity: { value: 0.64 },
+      uOpacity: { value: 0.78 },
       uTime: { value: 0 },
       uStrength: { value: 0 },
     };
@@ -796,7 +796,7 @@ class RaftController {
         }
 
         void main() {
-          float distanceFade = 1.0 - smoothstep(3.45, 6.25, vLocalPosition.z);
+          float distanceFade = 1.0 - smoothstep(6.0, 10.5, vLocalPosition.z);
           float turbulence = foamNoise(vec2(
             vLocalPosition.x * 9.4 + uTime * 0.10,
             vLocalPosition.z * 1.72 - uTime * 0.34
@@ -819,7 +819,7 @@ class RaftController {
 
           vec3 foamColor = mix(
             uColor,
-            vec3(0.62, 0.84, 0.84),
+            vec3(0.86, 0.94, 0.93),
             smoothstep(0.38, 0.88, turbulence) * 0.72
           );
           gl_FragColor = vec4(foamColor, foamAlpha);
@@ -850,9 +850,9 @@ class RaftController {
       { x: 0.96, z: 3.28, width: 0.34, alpha: 0.38 },
       { x: 1.08, z: 3.74, width: 0.37, alpha: 0.3 },
       { x: 1.2, z: 4.25, width: 0.4, alpha: 0.22 },
-      { x: 1.31, z: 4.82, width: 0.42, alpha: 0.15 },
-      { x: 1.39, z: 5.44, width: 0.4, alpha: 0.08 },
-      { x: 1.45, z: 6.08, width: 0.34, alpha: 0 },
+      { x: 1.31, z: 6.8, width: 0.42, alpha: 0.15 },
+      { x: 1.39, z: 8.5, width: 0.4, alpha: 0.08 },
+      { x: 1.45, z: 10.5, width: 0.34, alpha: 0 },
     ];
     for (const side of [-1, 1]) {
       const wakeGeometry = this.createWakeRibbonGeometry(
@@ -910,10 +910,10 @@ class RaftController {
     }
     this.raftGroup.add(this.wakeGroup);
 
-    const contactGeometry = this.registerGeometry(new THREE.RingGeometry(0.55, 1, 24));
+    const contactGeometry = this.registerGeometry(new THREE.RingGeometry(0.22, 1.35, 24));
     for (let index = 0; index < this.sampleOffsets.length; index += 1) {
       const contactMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
-        color: 0xd8f2f2,
+        color: 0xe8f6f6,
         transparent: true,
         opacity: 0,
         depthWrite: false,
@@ -1278,7 +1278,7 @@ class RaftController {
     this.wakeGroup.scale.set(
       0.82 + wakeStrength * 0.26,
       1,
-      0.78 + wakeStrength * 0.48,
+      0.95 + wakeStrength * 0.85,
     );
     if (this.wakeUniforms) {
       this.wakeUniforms.uTime.value = elapsedSeconds;
@@ -1364,11 +1364,11 @@ class RaftController {
       );
       this.sampleCompressions[index] = compression;
       const alpha = clamp(
-        compression * smoothstep(0.8, 4.5, this.speedMetersPerSecond),
+        0.28 + compression * smoothstep(0.3, 3.2, this.speedMetersPerSecond),
         0,
         1,
       );
-      const radius = 0.35 + 0.45 * compression;
+      const radius = 0.55 + 0.7 * compression;
       const ring = this.contactRings[index];
       ring.position.set(
         this.sampleWorldPosition.x,
@@ -1379,7 +1379,7 @@ class RaftController {
       ring.visible = alpha > 0.02;
       const material = ring.material;
       if (material instanceof THREE.MeshBasicMaterial) {
-        material.opacity = alpha * 0.72;
+        material.opacity = alpha * 0.92;
       }
     }
     this.emitContactSpray(elapsedSeconds);
