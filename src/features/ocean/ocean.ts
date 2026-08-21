@@ -9,9 +9,16 @@ import {
   sampleOceanWave,
 } from './waves';
 
+export interface HullFoamContact {
+  x: number;
+  z: number;
+  radius: number;
+}
+
 export interface OceanSurfaceService {
   sampleHeight(x: number, z: number, elapsedSeconds: number): number;
   sampleNormal(x: number, z: number, elapsedSeconds: number, target?: THREE.Vector3): THREE.Vector3;
+  setHullFoam(contacts: readonly HullFoamContact[], strength: number): void;
 }
 
 export const oceanSurfaceServiceKey = createRuntimeServiceKey<OceanSurfaceService>('ocean.surface.v1');
@@ -75,6 +82,8 @@ uniform sampler2D uFoamMap;
 uniform sampler2D uSceneColor;
 uniform sampler2D uSceneDepth;
 uniform sampler2D uEnvEquirect;
+uniform vec2 uHullContact[8];
+uniform float uHullFoam;
 uniform float uCameraNear;
 uniform float uCameraFar;
 uniform vec2 uResolution;
@@ -238,6 +247,16 @@ void main() {
   float waterColumn = vWaveHeight - bathymetry;
   float shoreFoam = smoothstep(1.6, 0.08, waterColumn) * smoothstep(-0.35, 0.12, bathymetry);
   foam = clamp(foam + shoreFoam, 0.0, 1.0);
+  float hull = 0.0;
+  hull += (1.0 - smoothstep(0.0, 1.85, length(vOceanPosition - uHullContact[0]))) * uHullFoam;
+  hull += (1.0 - smoothstep(0.0, 1.85, length(vOceanPosition - uHullContact[1]))) * uHullFoam;
+  hull += (1.0 - smoothstep(0.0, 1.85, length(vOceanPosition - uHullContact[2]))) * uHullFoam;
+  hull += (1.0 - smoothstep(0.0, 1.15, length(vOceanPosition - uHullContact[3]))) * uHullFoam;
+  hull += (1.0 - smoothstep(0.0, 1.15, length(vOceanPosition - uHullContact[4]))) * uHullFoam;
+  hull += (1.0 - smoothstep(0.0, 1.15, length(vOceanPosition - uHullContact[5]))) * uHullFoam;
+  hull += (1.0 - smoothstep(0.0, 1.15, length(vOceanPosition - uHullContact[6]))) * uHullFoam;
+  hull += (1.0 - smoothstep(0.0, 1.15, length(vOceanPosition - uHullContact[7]))) * uHullFoam;
+  foam = clamp(foam + hull * breakup * vFoam, 0.0, 1.0);
 
   // Fresnel-Schlick for the air/water interface. F0 is derived from the
   // water IOR (roughly ((1.0 - 1.333) / (1.0 + 1.333))^2).
@@ -374,6 +393,8 @@ interface OceanUniforms {
   uViewMatrix: { value: THREE.Matrix4 };
   uProjMatrix: { value: THREE.Matrix4 };
   uEnvEquirect: { value: THREE.Texture | null };
+  uHullContact: { value: THREE.Vector2[] };
+  uHullFoam: { value: number };
 }
 
 function sceneTextureSize(width: number, height: number, pixelRatio = 1): {
@@ -680,6 +701,10 @@ export function createOceanFeature(): RuntimeFeature {
           uViewMatrix: { value: context.camera.matrixWorldInverse.clone() },
           uProjMatrix: { value: context.camera.projectionMatrix.clone() },
           uEnvEquirect: { value: equirectTarget.texture },
+          uHullContact: {
+            value: Array.from({ length: 8 }, () => new THREE.Vector2(1e6, 1e6)),
+          },
+          uHullFoam: { value: 0 },
         };
 
         const oceanMaterial = new THREE.ShaderMaterial({
@@ -741,6 +766,21 @@ export function createOceanFeature(): RuntimeFeature {
             elapsedSeconds: number,
             target?: THREE.Vector3,
           ): THREE.Vector3 => sampleOceanNormal(x, z, elapsedSeconds, target),
+          setHullFoam: (contacts, strength) => {
+            if (!oceanUniforms) {
+              return;
+            }
+            const points = oceanUniforms.uHullContact.value;
+            for (let index = 0; index < 8; index += 1) {
+              const contact = contacts[index];
+              if (contact) {
+                points[index].set(contact.x, contact.z);
+              } else {
+                points[index].set(1e6, 1e6);
+              }
+            }
+            oceanUniforms.uHullFoam.value = strength;
+          },
         });
       } catch (error) {
         unregisterService?.();

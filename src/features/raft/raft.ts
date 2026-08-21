@@ -1469,7 +1469,10 @@ class RaftController {
       return;
     }
 
-    this.contactFoamGroup.visible = true;
+    this.contactFoamGroup.visible = false;
+    if (this.waterlineRibbon) {
+      this.waterlineRibbon.visible = false;
+    }
     let wetFloor = 0;
     let surfaceHeight = 0;
     for (let index = 0; index < this.sampleOffsets.length; index += 1) {
@@ -1515,11 +1518,20 @@ class RaftController {
         this.waterlinePoints[loopIndex * 3 + 2] = this.sampleWorldPosition.z;
       }
     }
+    const contacts = [];
+    for (let loop = 0; loop < WATERLINE_LOOP.length; loop += 1) {
+      contacts.push({
+        x: this.waterlinePoints[loop * 3],
+        z: this.waterlinePoints[loop * 3 + 2],
+        radius: loop < 3 ? 1.85 : 1.15,
+      });
+    }
+    const meanAlpha = wetFloor / this.sampleOffsets.length;
+    ocean.setHullFoam(contacts, meanAlpha);
     const ribbon = this.waterlineRibbon;
     const target = this.waterlinePositions;
     const material = this.hullFoamMaterial;
     if (ribbon && target && material) {
-      const meanAlpha = wetFloor / this.sampleOffsets.length;
       const count = WATERLINE_LOOP.length;
       const halfWidth = WATERLINE_WIDTH * 0.5;
       for (let index = 0; index < count; index += 1) {
@@ -1544,7 +1556,7 @@ class RaftController {
         target[index * 6 + 5] = z + normalZ * halfWidth;
       }
       ribbon.geometry.getAttribute('position').needsUpdate = true;
-      ribbon.visible = meanAlpha > 0.02;
+      ribbon.visible = false;
       material.opacity = WATERLINE_ALPHA * meanAlpha;
     }
     this.emitContactSpray(elapsedSeconds);
