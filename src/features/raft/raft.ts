@@ -414,6 +414,9 @@ class RaftController {
   private readonly targetOffset = new THREE.Vector3();
   private readonly sampleHeights = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   private readonly sprayParticles: SprayParticle[] = [];
+  private readonly plumeCards: THREE.Mesh[] = [];
+  private readonly plumeOpacities: { value: number }[] = [];
+  private bowWet = 0;
   private readonly sampleCompressions = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   private readonly contactBurstAt = [-1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9];
   private sprayEmitIndex = 0;
@@ -518,8 +521,9 @@ class RaftController {
     this.updateMovement(deltaSeconds);
     this.updateSurface(deltaSeconds, context.frame.elapsedSeconds);
     this.updateSail();
-    this.updateWake(context.frame.elapsedSeconds);
+    this.updateWake(context.frame.elapsedSeconds, context.camera);
     this.updateCamera(context, deltaSeconds);
+    this.orientPlumeCards(context.camera);
     this.hud?.update(
       this.speedMetersPerSecond * KNOTS_PER_METRE_PER_SECOND,
       this.sailPower,
@@ -575,6 +579,8 @@ class RaftController {
     this.materials.clear();
     this.textures.clear();
     this.sprayParticles.length = 0;
+    this.plumeCards.length = 0;
+    this.plumeOpacities.length = 0;
     this.sailGeometry = null;
     this.sailBasePositions = null;
     this.sailBillowWeights = null;
@@ -931,46 +937,51 @@ class RaftController {
       throw new Error('Foam breakup texture must be loaded before building hull foam.');
     }
 
-    const sprayMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
-      color: 0x8ec4c9,
-      roughness: 0.32,
-      metalness: 0,
-      emissive: 0x173d43,
-      emissiveIntensity: 0.04,
-      transparent: true,
-      opacity: 0.22,
-      alphaTest: 0.02,
-      depthWrite: false,
-    }));
-    const sprayGeometry = this.registerGeometry(new THREE.SphereGeometry(0.038, 10, 6));
-    for (let index = 0; index < 24; index += 1) {
-      const spread = (index % 8) / 7;
-      const side = index % 2 === 0 ? -1 : 1;
-      const baseX = side * (0.32 + spread * 1.18 + (index % 3) * 0.06);
-      const particle = new THREE.Mesh(sprayGeometry, sprayMaterial);
-      const baseY = 0.11 + (index % 4) * 0.035;
-      const baseZ = 1.9 + (index % 8) * 0.28;
-      particle.position.set(baseX, baseY, baseZ);
-      particle.renderOrder = 2;
-      this.raftGroup.add(particle);
-      this.sprayParticles.push({
-        mesh: particle,
-        baseX,
-        baseY,
-        baseZ,
-        phase: index * 0.71,
-        spread,
-        size: 0.52 + (index % 5) * 0.11,
-        bursting: false,
-        burstStart: 0,
-        burstOriginX: baseX,
-        burstOriginY: baseY,
-        burstOriginZ: baseZ,
-        burstDirX: 0,
-        burstDirY: 0.70710678,
-        burstDirZ: 0.70710678,
-        burstStrength: 0,
-      });
+    const plumeGeometry = this.registerGeometry(new THREE.PlaneGeometry(1.4, 2.0));
+    const plumeSlots = [
+      { x: -0.38, y: 0.74, z: -2.08 },
+      { x: 0.38, y: 0.74, z: -2.08 },
+    ] as const;
+    for (const slot of plumeSlots) {
+      const opacity = { value: 0 };
+      const material = this.registerMaterial(new THREE.ShaderMaterial({
+        uniforms: {
+          map: { value: this.foamBreakupTexture },
+          uOpacity: opacity,
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D map;
+          uniform float uOpacity;
+          varying vec2 vUv;
+          void main() {
+            float radial = clamp(1.0 - length(vUv - 0.5) * 2.15, 0.0, 1.0);
+            float foam = texture2D(map, vUv).g;
+            float alpha = foam * radial * radial * uOpacity;
+            if (alpha < 0.02) discard;
+            gl_FragColor = vec4(vec3(0.96, 0.95, 0.92), alpha);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.NormalBlending,
+        side: THREE.DoubleSide,
+        fog: false,
+      }));
+      const card = new THREE.Mesh(plumeGeometry, material);
+      card.position.set(slot.x, slot.y, slot.z);
+      card.renderOrder = 2;
+      card.visible = false;
+      this.raftGroup.add(card);
+      this.plumeCards.push(card);
+      this.plumeOpacities.push(opacity);
     }
     this.raftGroup.add(this.wakeGroup);
 
@@ -1391,9 +1402,7 @@ class RaftController {
     geometry.computeVertexNormals();
   }
 
-  private updateWake(elapsedSeconds: number): void {
-    const speedFactor = clamp(this.speedMetersPerSecond / SAIL_RUN_SPEED, 0, 1);
-    const impactFactor = clamp(this.wakeImpact, 0, 1);
+  private updateWake(elapsedSeconds: number, _camera: THREE.Camera): void {
     // Wake is boat speed first, plus a slap from heave rate. Spring is read-only.
     const wakeStrength = clamp(
       smoothstep(0.8, 4.5, this.speedMetersPerSecond)
@@ -1412,54 +1421,24 @@ class RaftController {
       this.wakeUniforms.uStrength.value = wakeStrength;
     }
 
-    const sprayStrength = clamp(speedFactor * 0.7 + impactFactor * 0.95, 0, 1);
-    for (const particle of this.sprayParticles) {
-      if (particle.bursting) {
-        const age = elapsedSeconds - particle.burstStart;
-        const life = 0.3;
-        if (age >= 0 && age < life) {
-          const travel = age / life;
-          const dist = 0.62 + particle.burstStrength * 0.7;
-          particle.mesh.position.set(
-            particle.burstOriginX + particle.burstDirX * travel * dist,
-            particle.burstOriginY + particle.burstDirY * travel * dist,
-            particle.burstOriginZ + particle.burstDirZ * travel * dist,
-          );
-          particle.mesh.visible = true;
-          const size = particle.size * (0.5 + particle.burstStrength * 0.35) * (1 - travel * 0.55);
-          particle.mesh.scale.set(size * 0.22, size * 2.6, size * 0.18);
-          continue;
-        }
-        particle.bursting = false;
-      }
-      const phase = elapsedSeconds * (1.8 + particle.spread + speedFactor * 0.75) + particle.phase;
-      const travel = (elapsedSeconds * (
-        0.45
-        + speedFactor * 0.9
-        + impactFactor * 1.45
-      ) + particle.phase * 0.14) % 1;
-      const dissipation = 1 - travel;
-      const launchHeight = (0.14 + speedFactor * 0.2 + impactFactor * 0.56) * 2.4;
-      const launchDistance = 0.68 + speedFactor * 1.2 + impactFactor * 1.45;
-      particle.mesh.position.x = particle.baseX
-        + Math.sin(phase) * (0.08 + speedFactor * 0.04 + impactFactor * 0.1);
-      particle.mesh.position.y = particle.baseY
-        + Math.abs(Math.sin(phase * 0.8)) * launchHeight * (0.35 + particle.spread * 0.65);
-      particle.mesh.position.z = particle.baseZ + travel * launchDistance;
-      particle.mesh.visible = sprayStrength > 0.035 && dissipation > 0.025;
-      // Elongated, dissipating droplets read as blown spray rather than static
-      // spheres. A small impact boost produces a short burst on hard landings.
-      const size = particle.size
-        * (0.24 + sprayStrength * 0.68)
-        * (0.36 + dissipation * 0.64);
-      particle.mesh.scale.set(
-        size * (0.22 + particle.spread * 0.08),
-        size * (2.15 + impactFactor * 0.7),
-        size * (0.18 + speedFactor * 0.1),
-      );
+    const burst = this.bowWet > 0.22 ? 1 : 0;
+    const pulse = 1.0 + 0.25 * Math.sin(elapsedSeconds * 8.2) * burst;
+    const opacity = 0.38 * this.bowWet;
+    for (let index = 0; index < this.plumeCards.length; index += 1) {
+      const card = this.plumeCards[index];
+      card.visible = this.bowWet > 0.04;
+      card.position.y = 0.74 + this.bowWet * 0.16;
+      card.scale.setScalar(pulse);
+      this.plumeOpacities[index].value = opacity;
     }
 
     this.updateContactFoam(elapsedSeconds);
+  }
+
+  private orientPlumeCards(camera: THREE.Camera): void {
+    for (const card of this.plumeCards) {
+      card.lookAt(camera.position);
+    }
   }
 
   private updateContactFoam(elapsedSeconds: number): void {
@@ -1474,6 +1453,7 @@ class RaftController {
       this.waterlineRibbon.visible = false;
     }
     let wetFloor = 0;
+    let bowWet = 0;
     let surfaceHeight = 0;
     for (let index = 0; index < this.sampleOffsets.length; index += 1) {
       const offset = this.sampleOffsets[index];
@@ -1510,6 +1490,9 @@ class RaftController {
       ring.scale.setScalar(radius);
       ring.visible = false;
       wetFloor += alpha;
+      if (index < 3) {
+        bowWet += alpha;
+      }
       surfaceHeight += height;
       const loopIndex = WATERLINE_LOOP.indexOf(index as typeof WATERLINE_LOOP[number]);
       if (loopIndex >= 0) {
@@ -1526,6 +1509,7 @@ class RaftController {
         radius: loop < 3 ? 1.85 : 1.15,
       });
     }
+    this.bowWet = bowWet / 3;
     const meanAlpha = wetFloor / this.sampleOffsets.length;
     ocean.setHullFoam(contacts, meanAlpha);
     const ribbon = this.waterlineRibbon;
