@@ -654,7 +654,7 @@ class RaftController {
       emissiveIntensity: 0.06,
     })));
     const sailMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
-      color: 0xe8d6b4,
+      color: 0xf3efe6,
       map: this.sailTexture,
       normalMap: sailMaps.normalMap,
       normalScale: new THREE.Vector2(0.34, 0.34),
@@ -664,8 +664,8 @@ class RaftController {
       side: THREE.DoubleSide,
       transparent: true,
       alphaTest: 0.04,
-      emissive: 0x63482b,
-      emissiveIntensity: 0.07,
+      emissive: 0x2a261c,
+      emissiveIntensity: 0.015,
     }));
 
     const logGeometry = this.registerGeometry(new THREE.CylinderGeometry(0.17, 0.17, 4.75, 12));
