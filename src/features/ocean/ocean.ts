@@ -247,19 +247,16 @@ void main() {
   float waterColumn = vWaveHeight - bathymetry;
   float shoreFoam = smoothstep(1.6, 0.08, waterColumn) * smoothstep(-0.35, 0.12, bathymetry);
   foam = clamp(foam + shoreFoam, 0.0, 1.0);
-  float NdotV = clamp(dot(normal, viewDirection), 0.0, 1.0);
-  float bowHull = 0.0;
-  bowHull += (1.0 - smoothstep(0.0, 2.40, length(vOceanPosition - uHullContact[0]))) * uHullFoam;
-  bowHull += (1.0 - smoothstep(0.0, 2.40, length(vOceanPosition - uHullContact[1]))) * uHullFoam;
-  bowHull += (1.0 - smoothstep(0.0, 2.40, length(vOceanPosition - uHullContact[2]))) * uHullFoam;
-  bowHull *= 1.0 + 1.5 * (1.0 - NdotV);
-  float hull = bowHull;
+  float hull = 0.0;
+  hull += (1.0 - smoothstep(0.0, 1.85, length(vOceanPosition - uHullContact[0]))) * uHullFoam;
+  hull += (1.0 - smoothstep(0.0, 1.85, length(vOceanPosition - uHullContact[1]))) * uHullFoam;
+  hull += (1.0 - smoothstep(0.0, 1.85, length(vOceanPosition - uHullContact[2]))) * uHullFoam;
   hull += (1.0 - smoothstep(0.0, 1.15, length(vOceanPosition - uHullContact[3]))) * uHullFoam;
   hull += (1.0 - smoothstep(0.0, 1.15, length(vOceanPosition - uHullContact[4]))) * uHullFoam;
   hull += (1.0 - smoothstep(0.0, 1.15, length(vOceanPosition - uHullContact[5]))) * uHullFoam;
   hull += (1.0 - smoothstep(0.0, 1.15, length(vOceanPosition - uHullContact[6]))) * uHullFoam;
   hull += (1.0 - smoothstep(0.0, 1.15, length(vOceanPosition - uHullContact[7]))) * uHullFoam;
-  foam = clamp(foam + hull * breakup * 1.15, 0.0, 1.0);
+  foam = clamp(foam + hull * breakup * vFoam, 0.0, 1.0);
 
   // Fresnel-Schlick for the air/water interface. F0 is derived from the
   // water IOR (roughly ((1.0 - 1.333) / (1.0 + 1.333))^2).
