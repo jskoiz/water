@@ -109,12 +109,16 @@ const WAKE_SECTIONS: readonly WakeSection[] = [
   { x: 1.39, z: 8.5, width: 0.4, alpha: 0.08 },
   { x: 1.45, z: 10.5, width: 0.34, alpha: 0 },
 ];
-const WAKE_FOAM_PER_SECTION = 4;
+const WAKE_FOAM_PER_SECTION = 8;
 const WAKE_FOAM_SCATTER = [
-  { u: -0.32, v: -0.10, y: 0.06 },
-  { u: 0.18, v: 0.14, y: 0.13 },
-  { u: -0.08, v: 0.04, y: 0.19 },
-  { u: 0.36, v: -0.16, y: 0.09 },
+  { inward: 0.00, v: -0.10, y: 0.06 },
+  { inward: 0.04, v: 0.12, y: 0.18 },
+  { inward: 0.08, v: -0.04, y: 0.11 },
+  { inward: 0.02, v: 0.18, y: 0.26 },
+  { inward: 0.22, v: 0.06, y: 0.09 },
+  { inward: 0.38, v: -0.14, y: 0.22 },
+  { inward: 0.54, v: 0.16, y: 0.14 },
+  { inward: 0.70, v: -0.06, y: 0.30 },
 ] as const;
 
 interface SpringState {
@@ -892,11 +896,11 @@ class RaftController {
       this.wakeGroup.add(wake);
     }
 
-    const wakeFoamGeometry = this.registerGeometry(new THREE.SphereGeometry(0.10, 8, 6));
+    const wakeFoamGeometry = this.registerGeometry(new THREE.SphereGeometry(0.24, 8, 6));
     const wakeFoamMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
       color: 0xeef8f8,
       transparent: true,
-      opacity: 0.26,
+      opacity: 0.38,
       depthWrite: false,
       depthTest: true,
       blending: THREE.AdditiveBlending,
@@ -1357,14 +1361,14 @@ class RaftController {
         const side = sides[sideIndex];
         for (let sectionIndex = 0; sectionIndex < WAKE_SECTIONS.length; sectionIndex += 1) {
           const section = WAKE_SECTIONS[sectionIndex];
-          const bubbleScale = section.alpha * wakeStrength;
+          const bubbleScale = (0.50 + 0.70 * section.alpha) * (0.40 + 0.60 * wakeStrength);
           for (let bubble = 0; bubble < WAKE_FOAM_PER_SECTION; bubble += 1) {
             const scatter = WAKE_FOAM_SCATTER[bubble];
             const bob = 0.03 * Math.sin(
               elapsedSeconds * 2.15 + sectionIndex * 0.7 + sideIndex * 1.3 + bubble * 0.9,
             );
             this.foamDummy.position.set(
-              section.x * side + scatter.u * section.width,
+              section.x * side * (1 - scatter.inward),
               scatter.y + bob,
               section.z + scatter.v * section.width,
             );
