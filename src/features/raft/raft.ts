@@ -56,6 +56,15 @@ interface SprayParticle {
   readonly phase: number;
   readonly spread: number;
   readonly size: number;
+  bursting: boolean;
+  burstStart: number;
+  burstOriginX: number;
+  burstOriginY: number;
+  burstOriginZ: number;
+  burstDirX: number;
+  burstDirY: number;
+  burstDirZ: number;
+  burstStrength: number;
 }
 
 interface WakeSection {
@@ -365,6 +374,9 @@ class RaftController {
   private readonly targetOffset = new THREE.Vector3();
   private readonly sampleHeights = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   private readonly sprayParticles: SprayParticle[] = [];
+  private readonly sampleCompressions = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly contactBurstAt = [-1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9];
+  private sprayEmitIndex = 0;
   private readonly geometries = new Set<THREE.BufferGeometry>();
   private readonly materials = new Set<THREE.Material>();
   private readonly textures = new Set<THREE.Texture>();
@@ -840,7 +852,7 @@ class RaftController {
       const baseZ = 1.9 + (index % 8) * 0.28;
       particle.position.set(baseX, baseY, baseZ);
       particle.renderOrder = 2;
-      this.wakeGroup.add(particle);
+      this.raftGroup.add(particle);
       this.sprayParticles.push({
         mesh: particle,
         baseX,
@@ -849,6 +861,15 @@ class RaftController {
         phase: index * 0.71,
         spread,
         size: 0.52 + (index % 5) * 0.11,
+        bursting: false,
+        burstStart: 0,
+        burstOriginX: baseX,
+        burstOriginY: baseY,
+        burstOriginZ: baseZ,
+        burstDirX: 0,
+        burstDirY: 0.70710678,
+        burstDirZ: 0.70710678,
+        burstStrength: 0,
       });
     }
     this.raftGroup.add(this.wakeGroup);
@@ -1230,6 +1251,24 @@ class RaftController {
 
     const sprayStrength = clamp(speedFactor * 0.7 + impactFactor * 0.95, 0, 1);
     for (const particle of this.sprayParticles) {
+      if (particle.bursting) {
+        const age = elapsedSeconds - particle.burstStart;
+        const life = 0.48;
+        if (age >= 0 && age < life) {
+          const travel = age / life;
+          const dist = 0.42 + particle.burstStrength * 0.55;
+          particle.mesh.position.set(
+            particle.burstOriginX + particle.burstDirX * travel * dist,
+            particle.burstOriginY + particle.burstDirY * travel * dist,
+            particle.burstOriginZ + particle.burstDirZ * travel * dist,
+          );
+          particle.mesh.visible = true;
+          const size = particle.size * (0.5 + particle.burstStrength * 0.35) * (1 - travel);
+          particle.mesh.scale.set(size * 0.62, size, size * 0.48);
+          continue;
+        }
+        particle.bursting = false;
+      }
       const phase = elapsedSeconds * (1.8 + particle.spread + speedFactor * 0.75) + particle.phase;
       const travel = (elapsedSeconds * (
         0.45
@@ -1287,6 +1326,7 @@ class RaftController {
         0,
         1,
       );
+      this.sampleCompressions[index] = compression;
       const alpha = clamp(compression * this.speedMetersPerSecond, 0, 1);
       const radius = 0.35 + 0.45 * compression;
       const ring = this.contactRings[index];
@@ -1300,6 +1340,38 @@ class RaftController {
       const material = ring.material;
       if (material instanceof THREE.MeshBasicMaterial) {
         material.opacity = alpha * 0.72;
+      }
+    }
+    this.emitContactSpray(elapsedSeconds);
+  }
+
+  private emitContactSpray(elapsedSeconds: number): void {
+    if (this.sprayParticles.length === 0) {
+      return;
+    }
+    const heave = Math.abs(this.heaveVelocity);
+    const speed = this.speedMetersPerSecond;
+    for (let index = 0; index < this.sampleOffsets.length; index += 1) {
+      const signal = Math.max(heave, this.sampleCompressions[index] * speed);
+      if (signal <= 0.45 || elapsedSeconds - this.contactBurstAt[index] < 0.28) {
+        continue;
+      }
+      this.contactBurstAt[index] = elapsedSeconds;
+      const count = Math.floor(3 + 8 * signal);
+      const offset = this.sampleOffsets[index];
+      for (let n = 0; n < count; n += 1) {
+        const particle = this.sprayParticles[this.sprayEmitIndex % this.sprayParticles.length];
+        this.sprayEmitIndex += 1;
+        const jitter = (n - (count - 1) * 0.5) * 0.07;
+        particle.bursting = true;
+        particle.burstStart = elapsedSeconds;
+        particle.burstOriginX = offset.x + jitter;
+        particle.burstOriginY = 0.08;
+        particle.burstOriginZ = offset.z;
+        particle.burstDirX = 0;
+        particle.burstDirY = 0.70710678;
+        particle.burstDirZ = 0.70710678;
+        particle.burstStrength = signal;
       }
     }
   }
