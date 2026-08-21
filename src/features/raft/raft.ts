@@ -42,16 +42,28 @@ const MAX_PITCH = 0.45;
 const MAX_ROLL = 0.52;
 const CONTACT_HALF_WIDTH = 1.25;
 const CONTACT_HALF_LENGTH = 2.05;
-const CONTACT_FOAM_PER_SAMPLE = 8;
+const CONTACT_FOAM_PER_SAMPLE = 20;
 const CONTACT_FOAM_SCATTER = [
-  { x: 0.25, z: 0.00, y: 0.06 },
-  { x: 0.18, z: 0.32, y: 0.14 },
-  { x: -0.12, z: 0.55, y: 0.09 },
-  { x: -0.62, z: 0.28, y: 0.18 },
-  { x: -0.85, z: 0.00, y: 0.11 },
-  { x: -0.48, z: -0.38, y: 0.20 },
-  { x: 0.08, z: -0.72, y: 0.07 },
-  { x: 0.58, z: -0.22, y: 0.16 },
+  { x: 0.12, z: 0.00, y: 0.06 },
+  { x: -0.15, z: 0.14, y: 0.13 },
+  { x: 0.02, z: -0.24, y: 0.20 },
+  { x: 0.16, z: 0.21, y: 0.10 },
+  { x: -0.28, z: -0.05, y: 0.17 },
+  { x: 0.26, z: -0.16, y: 0.06 },
+  { x: -0.08, z: 0.31, y: 0.13 },
+  { x: -0.16, z: -0.30, y: 0.20 },
+  { x: 0.33, z: 0.12, y: 0.10 },
+  { x: -0.34, z: 0.14, y: 0.17 },
+  { x: 0.16, z: -0.35, y: 0.06 },
+  { x: 0.12, z: 0.38, y: 0.13 },
+  { x: -0.35, z: -0.20, y: 0.20 },
+  { x: 0.41, z: -0.09, y: 0.10 },
+  { x: -0.25, z: 0.35, y: 0.17 },
+  { x: -0.06, z: -0.44, y: 0.06 },
+  { x: 0.34, z: 0.29, y: 0.13 },
+  { x: -0.46, z: 0.02, y: 0.20 },
+  { x: 0.33, z: -0.33, y: 0.10 },
+  { x: -0.02, z: 0.48, y: 0.17 },
 ] as const;
 const HEAVE_EQUILIBRIUM_OFFSET = -0.12;
 const MAX_HEAVE_DEVIATION = 0.72;
@@ -110,13 +122,20 @@ const WAKE_SECTIONS: readonly WakeSection[] = [
   { x: 1.39, z: 8.5, width: 0.4, alpha: 0.08 },
   { x: 1.45, z: 10.5, width: 0.34, alpha: 0 },
 ];
-const WAKE_FOAM_PER_SECTION = 5;
+const WAKE_FOAM_PER_SECTION = 12;
 const WAKE_FOAM_SCATTER = [
-  { inward: 0.00, v: -0.10, y: 0.06 },
-  { inward: 0.03, v: 0.12, y: 0.14 },
-  { inward: 0.06, v: -0.04, y: 0.09 },
-  { inward: 0.09, v: 0.16, y: 0.18 },
-  { inward: 0.12, v: -0.08, y: 0.11 },
+  { inward: 0.00, v: -0.18, y: 0.06 },
+  { inward: 0.04, v: -0.11, y: 0.08 },
+  { inward: 0.08, v: -0.04, y: 0.11 },
+  { inward: 0.12, v: 0.04, y: 0.14 },
+  { inward: 0.00, v: 0.11, y: 0.16 },
+  { inward: 0.04, v: 0.18, y: 0.06 },
+  { inward: 0.08, v: -0.18, y: 0.08 },
+  { inward: 0.12, v: -0.11, y: 0.11 },
+  { inward: 0.00, v: -0.04, y: 0.14 },
+  { inward: 0.04, v: 0.04, y: 0.16 },
+  { inward: 0.08, v: 0.11, y: 0.06 },
+  { inward: 0.12, v: 0.18, y: 0.08 },
 ] as const;
 
 interface SpringState {
