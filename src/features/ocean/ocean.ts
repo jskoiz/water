@@ -9,9 +9,16 @@ import {
   sampleOceanWave,
 } from './waves';
 
+export interface HullFoamContact {
+  x: number;
+  z: number;
+  radius: number;
+}
+
 export interface OceanSurfaceService {
   sampleHeight(x: number, z: number, elapsedSeconds: number): number;
   sampleNormal(x: number, z: number, elapsedSeconds: number, target?: THREE.Vector3): THREE.Vector3;
+  setHullFoam(contacts: readonly HullFoamContact[], strength: number): void;
 }
 
 export const oceanSurfaceServiceKey = createRuntimeServiceKey<OceanSurfaceService>('ocean.surface.v1');
@@ -75,6 +82,9 @@ uniform sampler2D uFoamMap;
 uniform sampler2D uSceneColor;
 uniform sampler2D uSceneDepth;
 uniform sampler2D uEnvEquirect;
+uniform vec2 uHullContacts[8];
+uniform float uHullRadii[8];
+uniform float uHullFoam;
 uniform float uCameraNear;
 uniform float uCameraFar;
 uniform vec2 uResolution;
@@ -238,6 +248,23 @@ void main() {
   float waterColumn = vWaveHeight - bathymetry;
   float shoreFoam = smoothstep(1.6, 0.08, waterColumn) * smoothstep(-0.35, 0.12, bathymetry);
   foam = clamp(foam + shoreFoam, 0.0, 1.0);
+  float hull = 0.0;
+  for (int i = 0; i < 8; i++) {
+    vec2 delta = vOceanPosition - uHullContacts[i];
+    float dist = length(delta);
+    float radius = max(uHullRadii[i], 0.001);
+    float core = smoothstep(radius, radius * 0.18, dist);
+    float spray = smoothstep(radius * 1.45, radius * 0.55, dist) * 0.42;
+    float grain = foamLuma(
+      vOceanPosition * 0.48
+        + uHullContacts[i] * 0.07
+        + vec2(uTime * 0.09, -uTime * 0.07)
+    );
+    float mottled = mix(0.22, 1.12, smoothstep(0.22, 0.78, grain));
+    hull = max(hull, max(core, spray) * mottled);
+  }
+  hull *= uHullFoam;
+  foam = clamp(foam + hull, 0.0, 1.0);
 
   // Fresnel-Schlick for the air/water interface. F0 is derived from the
   // water IOR (roughly ((1.0 - 1.333) / (1.0 + 1.333))^2).
@@ -265,7 +292,12 @@ void main() {
   vec3 transmittedWater = mix(bodyColor, texture2D(uSceneColor, safeUV).rgb * transmittance, objectHit);
   vec3 waterColor = mix(transmittedWater, reflected, fresnel);
   vec3 foamColor = mix(vec3(0.16, 0.37, 0.42), vec3(0.72, 0.85, 0.81), breakup);
-  waterColor = mix(waterColor, foamColor, foam * 0.52);
+  vec3 splashColor = mix(vec3(0.62, 0.78, 0.76), vec3(0.93, 0.96, 0.94), breakup);
+  waterColor = mix(
+    waterColor,
+    mix(foamColor, splashColor, hull),
+    foam * mix(0.52, 0.78, hull)
+  );
 
   // Binary flake gate on Gerstner facets. No floor mix — glitter is off or on.
   vec3 halfVector = normalize(viewDirection + sunDirection);
@@ -374,6 +406,9 @@ interface OceanUniforms {
   uViewMatrix: { value: THREE.Matrix4 };
   uProjMatrix: { value: THREE.Matrix4 };
   uEnvEquirect: { value: THREE.Texture | null };
+  uHullContacts: { value: THREE.Vector2[] };
+  uHullRadii: { value: number[] };
+  uHullFoam: { value: number };
 }
 
 function sceneTextureSize(width: number, height: number, pixelRatio = 1): {
@@ -680,6 +715,11 @@ export function createOceanFeature(): RuntimeFeature {
           uViewMatrix: { value: context.camera.matrixWorldInverse.clone() },
           uProjMatrix: { value: context.camera.projectionMatrix.clone() },
           uEnvEquirect: { value: equirectTarget.texture },
+          uHullContacts: {
+            value: Array.from({ length: 8 }, () => new THREE.Vector2(1e6, 1e6)),
+          },
+          uHullRadii: { value: [0, 0, 0, 0, 0, 0, 0, 0] },
+          uHullFoam: { value: 0 },
         };
 
         const oceanMaterial = new THREE.ShaderMaterial({
@@ -741,6 +781,24 @@ export function createOceanFeature(): RuntimeFeature {
             elapsedSeconds: number,
             target?: THREE.Vector3,
           ): THREE.Vector3 => sampleOceanNormal(x, z, elapsedSeconds, target),
+          setHullFoam: (contacts, strength) => {
+            if (!oceanUniforms) {
+              return;
+            }
+            const points = oceanUniforms.uHullContacts.value;
+            const radii = oceanUniforms.uHullRadii.value;
+            for (let index = 0; index < 8; index += 1) {
+              const contact = contacts[index];
+              if (contact) {
+                points[index].set(contact.x, contact.z);
+                radii[index] = contact.radius;
+              } else {
+                points[index].set(1e6, 1e6);
+                radii[index] = 0;
+              }
+            }
+            oceanUniforms.uHullFoam.value = strength;
+          },
         });
       } catch (error) {
         unregisterService?.();
