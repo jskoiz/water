@@ -1520,19 +1520,14 @@ class RaftController {
     }
     const contacts = [];
     for (let loop = 0; loop < WATERLINE_LOOP.length; loop += 1) {
-      const sample = WATERLINE_LOOP[loop];
-      const bow = sample < 3;
       contacts.push({
         x: this.waterlinePoints[loop * 3],
         z: this.waterlinePoints[loop * 3 + 2],
-        radius: bow ? (sample === 1 ? 2.45 : 2.05) : 1.15,
+        radius: loop < 3 ? 1.85 : 1.15,
       });
     }
     const meanAlpha = wetFloor / this.sampleOffsets.length;
-    ocean.setHullFoam(
-      contacts,
-      clamp(0.32 + meanAlpha * 0.9 + this.speedMetersPerSecond * 0.06, 0, 1.2),
-    );
+    ocean.setHullFoam(contacts, meanAlpha);
     const ribbon = this.waterlineRibbon;
     const target = this.waterlinePositions;
     const material = this.hullFoamMaterial;
