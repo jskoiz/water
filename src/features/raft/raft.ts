@@ -1419,11 +1419,10 @@ class RaftController {
         const life = 0.48;
         if (age >= 0 && age < life) {
           const travel = age / life;
-          const dist = 0.72 + particle.burstStrength * 0.65;
-          const arc = travel * (1.0 - travel) * 4.0;
+          const dist = 0.42 + particle.burstStrength * 0.55;
           particle.mesh.position.set(
             particle.burstOriginX + particle.burstDirX * travel * dist,
-            particle.burstOriginY + particle.burstDirY * travel * dist + arc * 0.28,
+            particle.burstOriginY + particle.burstDirY * travel * dist,
             particle.burstOriginZ + particle.burstDirZ * travel * dist,
           );
           particle.mesh.visible = true;
@@ -1440,7 +1439,7 @@ class RaftController {
         + impactFactor * 1.45
       ) + particle.phase * 0.14) % 1;
       const dissipation = 1 - travel;
-      const launchHeight = 0.14 + speedFactor * 0.2 + impactFactor * 0.56;
+      const launchHeight = (0.14 + speedFactor * 0.2 + impactFactor * 0.56) * 1.8;
       const launchDistance = 0.68 + speedFactor * 1.2 + impactFactor * 1.45;
       particle.mesh.position.x = particle.baseX
         + Math.sin(phase) * (0.08 + speedFactor * 0.04 + impactFactor * 0.1);
@@ -1570,15 +1569,14 @@ class RaftController {
     const heave = Math.abs(this.heaveVelocity);
     const speed = this.speedMetersPerSecond;
     for (let index = 0; index < this.sampleOffsets.length; index += 1) {
-      if (index > 2) {
-        continue;
-      }
+      const bow = index < 3;
       const signal = Math.max(heave, this.sampleCompressions[index] * speed);
-      if (signal <= 0.85 || elapsedSeconds - this.contactBurstAt[index] < 0.28) {
+      const gate = bow ? 0.4 : 0.85;
+      if (signal <= gate || elapsedSeconds - this.contactBurstAt[index] < 0.28) {
         continue;
       }
       this.contactBurstAt[index] = elapsedSeconds;
-      const count = Math.floor(5 + 10 * signal);
+      const count = Math.floor(bow ? 6 + 10 * signal : 3 + 8 * signal);
       const offset = this.sampleOffsets[index];
       for (let n = 0; n < count; n += 1) {
         const particle = this.sprayParticles[this.sprayEmitIndex % this.sprayParticles.length];
@@ -1587,11 +1585,11 @@ class RaftController {
         particle.bursting = true;
         particle.burstStart = elapsedSeconds;
         particle.burstOriginX = offset.x + jitter;
-        particle.burstOriginY = 0.22;
+        particle.burstOriginY = 0.08;
         particle.burstOriginZ = offset.z;
-        particle.burstDirX = jitter * 0.8;
-        particle.burstDirY = 0.88;
-        particle.burstDirZ = -0.47;
+        particle.burstDirX = 0;
+        particle.burstDirY = bow ? 0.85 : 0.70710678;
+        particle.burstDirZ = bow ? 0.53 : 0.70710678;
         particle.burstStrength = signal;
       }
     }
