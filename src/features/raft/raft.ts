@@ -465,6 +465,7 @@ class RaftController {
     this.canvas = context.renderer.domElement;
     this.canvas.dataset.qa = 'water-canvas';
     this.hud = createRaftHud(context.renderer.domElement);
+    this.bindTrueWindHud(this.hud.element);
     this.initialized = true;
     this.updateSurface(1 / 60, 0);
     this.updateCamera(context, 1 / 60);
@@ -491,6 +492,26 @@ class RaftController {
 
   public resize(_context: RuntimeResizeContext): void {
     // The HUD uses viewport-relative CSS sizing; the runtime owns the camera projection.
+  }
+
+  private bindTrueWindHud(hudRoot: HTMLElement): void {
+    const wind = hudRoot.querySelector('[data-qa="wind"]');
+    if (!(wind instanceof HTMLElement)) {
+      return;
+    }
+    const knots = WIND_SPEED_MPS * KNOTS_PER_METRE_PER_SECOND;
+    const label = wind.querySelector('.raft-hud__wind-label');
+    if (label) {
+      label.textContent = `WIND ${knots.toFixed(1)} KN`;
+    }
+    const arrow = wind.querySelector('.raft-hud__wind-arrow');
+    if (arrow instanceof HTMLElement) {
+      // Compass N is HUD up. D0 in world XZ is (0.970, 0.243); north is -Z.
+      const angleDeg = Math.atan2(WIND_SEA_X, -WIND_SEA_Z) * (180 / Math.PI);
+      arrow.textContent = '↑';
+      arrow.style.display = 'inline-block';
+      arrow.style.transform = `rotate(${angleDeg.toFixed(2)}deg)`;
+    }
   }
 
   public dispose(_context: RuntimeContext): void {
