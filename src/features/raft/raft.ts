@@ -42,17 +42,6 @@ const MAX_PITCH = 0.45;
 const MAX_ROLL = 0.52;
 const CONTACT_HALF_WIDTH = 1.25;
 const CONTACT_HALF_LENGTH = 2.05;
-const CONTACT_FOAM_PER_SAMPLE = 8;
-const CONTACT_FOAM_SCATTER = [
-  { x: 0.25, z: 0.00, y: 0.06 },
-  { x: 0.18, z: 0.32, y: 0.14 },
-  { x: -0.12, z: 0.55, y: 0.09 },
-  { x: -0.62, z: 0.28, y: 0.18 },
-  { x: -0.85, z: 0.00, y: 0.11 },
-  { x: -0.48, z: -0.38, y: 0.20 },
-  { x: 0.08, z: -0.72, y: 0.07 },
-  { x: 0.58, z: -0.22, y: 0.16 },
-] as const;
 const HEAVE_EQUILIBRIUM_OFFSET = -0.12;
 const MAX_HEAVE_DEVIATION = 0.72;
 const MAX_HEAVE_VELOCITY = 3.2;
@@ -110,15 +99,6 @@ const WAKE_SECTIONS: readonly WakeSection[] = [
   { x: 1.39, z: 8.5, width: 0.4, alpha: 0.08 },
   { x: 1.45, z: 10.5, width: 0.34, alpha: 0 },
 ];
-const WAKE_FOAM_PER_SECTION = 5;
-const WAKE_FOAM_SCATTER = [
-  { inward: 0.00, v: -0.10, y: 0.06 },
-  { inward: 0.03, v: 0.12, y: 0.14 },
-  { inward: 0.06, v: -0.04, y: 0.09 },
-  { inward: 0.09, v: 0.16, y: 0.18 },
-  { inward: 0.12, v: -0.08, y: 0.11 },
-] as const;
-
 interface SpringState {
   readonly position: number;
   readonly velocity: number;
@@ -397,9 +377,8 @@ class RaftController {
   private readonly wakeGroup = new THREE.Group();
   private readonly contactFoamGroup = new THREE.Group();
   private readonly contactRings: THREE.Mesh[] = [];
-  private contactFoamVolume: THREE.InstancedMesh | null = null;
-  private wakeFoamVolume: THREE.InstancedMesh | null = null;
-  private readonly foamDummy = new THREE.Object3D();
+  private hullFoamCollar: THREE.Group | null = null;
+  private hullFoamMaterial: THREE.MeshBasicMaterial | null = null;
   private readonly sampleOffsets = [
     // A symmetric 3x3 contact stencil gives the hull a centerline keel and
     // midship contacts in addition to the four corners. It reacts to local
@@ -498,8 +477,8 @@ class RaftController {
     this.configureTexture(woodTexture, context.renderer);
     this.configureTexture(sailTexture, context.renderer);
     this.configureTexture(foamBreakupTexture, context.renderer);
-    foamBreakupTexture.wrapS = THREE.ClampToEdgeWrapping;
-    foamBreakupTexture.wrapT = THREE.ClampToEdgeWrapping;
+    foamBreakupTexture.wrapS = THREE.RepeatWrapping;
+    foamBreakupTexture.wrapT = THREE.RepeatWrapping;
 
     context.loading.update('Preparing raft systems…');
     this.buildRaft();
@@ -567,8 +546,8 @@ class RaftController {
     this.raftGroup.removeFromParent();
     this.contactFoamGroup.removeFromParent();
     this.contactRings.length = 0;
-    this.contactFoamVolume = null;
-    this.wakeFoamVolume = null;
+    this.hullFoamCollar = null;
+    this.hullFoamMaterial = null;
     for (const geometry of this.geometries) {
       geometry.dispose();
     }
@@ -778,9 +757,10 @@ class RaftController {
   private buildWake(): void {
     const wakeUniforms = {
       uColor: { value: new THREE.Color(0x6fc4c9) },
-      uOpacity: { value: 0.78 },
+      uOpacity: { value: 0.80 },
       uTime: { value: 0 },
       uStrength: { value: 0 },
+      uFoamMap: { value: this.foamBreakupTexture },
     };
     const wakeMaterial = this.registerMaterial(new THREE.ShaderMaterial({
       uniforms: {
@@ -808,6 +788,7 @@ class RaftController {
         uniform float uOpacity;
         uniform float uTime;
         uniform float uStrength;
+        uniform sampler2D uFoamMap;
         varying float vAlpha;
         varying vec3 vLocalPosition;
 
@@ -854,8 +835,12 @@ class RaftController {
             vLocalPosition.z * 6.4 - uTime * 1.8 + vLocalPosition.x * 9.0
           );
           float strength = smoothstep(0.04, 0.25, uStrength);
+          float foamMap = texture2D(uFoamMap, vec2(
+            vLocalPosition.x * 0.62 + uTime * 0.05,
+            vLocalPosition.z * 0.16 - uTime * 0.28
+          )).g;
           float foamAlpha = vAlpha * distanceFade * edgeBreakup * narrowStreak
-            * uOpacity * strength;
+            * uOpacity * strength * mix(0.42, 1.0, foamMap);
           float dither = hash12(vec2(
             floor(vLocalPosition.z * 7.0 + uTime * 0.8),
             floor(vLocalPosition.x * 18.0)
@@ -866,8 +851,8 @@ class RaftController {
 
           vec3 foamColor = mix(
             uColor,
-            vec3(0.86, 0.94, 0.93),
-            smoothstep(0.38, 0.88, turbulence) * 0.72
+            vec3(0.94, 0.95, 0.93),
+            clamp(smoothstep(0.38, 0.88, turbulence) * 0.72 + foamMap * 0.45, 0.0, 1.0)
           );
           gl_FragColor = vec4(foamColor, foamAlpha);
           #include <tonemapping_fragment>
@@ -879,6 +864,7 @@ class RaftController {
       fog: true,
       depthWrite: false,
       depthTest: true,
+      blending: THREE.NormalBlending,
       side: THREE.DoubleSide,
       polygonOffset: true,
       polygonOffsetFactor: -1,
@@ -900,47 +886,36 @@ class RaftController {
       wake.renderOrder = 1;
       this.wakeGroup.add(wake);
     }
+    for (const side of [-1, 1]) {
+      const volumeGeometry = this.createWakeRibbonGeometry(
+        WAKE_SECTIONS.map((section) => ({
+          ...section,
+          x: section.x * side,
+          width: section.width * 1.7,
+          alpha: section.alpha * 0.55,
+        })),
+      );
+      const volume = new THREE.Mesh(volumeGeometry, wakeMaterial);
+      volume.position.y = 0.11;
+      volume.renderOrder = 1;
+      this.wakeGroup.add(volume);
+    }
+    const fillGeometry = this.createWakeRibbonGeometry(
+      WAKE_SECTIONS.map((section, index) => ({
+        x: 0,
+        z: section.z,
+        width: 0.6 + 1.6 * (index / Math.max(WAKE_SECTIONS.length - 1, 1)),
+        alpha: 0.4,
+      })),
+    );
+    const fill = new THREE.Mesh(fillGeometry, wakeMaterial);
+    fill.position.y = 0.08;
+    fill.renderOrder = 1;
+    this.wakeGroup.add(fill);
 
     if (!this.foamBreakupTexture) {
-      throw new Error('Foam breakup texture must be loaded before building wake foam.');
+      throw new Error('Foam breakup texture must be loaded before building hull foam.');
     }
-    const wakeCardGeometry = this.registerGeometry(new THREE.PlaneGeometry(0.28, 0.28));
-    wakeCardGeometry.rotateX(-Math.PI / 2);
-    const hullCardGeometry = this.registerGeometry(new THREE.PlaneGeometry(0.38, 0.38));
-    hullCardGeometry.rotateX(-Math.PI / 2);
-    const foamCardMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      map: this.foamBreakupTexture,
-      transparent: true,
-      opacity: 0.45,
-      alphaTest: 0.08,
-      depthWrite: false,
-      depthTest: true,
-      blending: THREE.AdditiveBlending,
-      fog: true,
-      side: THREE.DoubleSide,
-    }));
-    const wakeCardMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      map: this.foamBreakupTexture,
-      transparent: true,
-      opacity: 0.30,
-      alphaTest: 0.08,
-      depthWrite: false,
-      depthTest: true,
-      blending: THREE.AdditiveBlending,
-      fog: true,
-      side: THREE.DoubleSide,
-    }));
-    const wakeVolume = new THREE.InstancedMesh(
-      wakeCardGeometry,
-      wakeCardMaterial,
-      WAKE_SECTIONS.length * 2 * WAKE_FOAM_PER_SECTION,
-    );
-    wakeVolume.frustumCulled = false;
-    wakeVolume.renderOrder = 2;
-    this.wakeGroup.add(wakeVolume);
-    this.wakeFoamVolume = wakeVolume;
 
     const sprayMaterial = this.registerMaterial(new THREE.MeshStandardMaterial({
       color: 0x8ec4c9,
@@ -1004,15 +979,30 @@ class RaftController {
       this.contactRings.push(ring);
     }
 
-    const volume = new THREE.InstancedMesh(
-      hullCardGeometry,
-      foamCardMaterial,
-      this.sampleOffsets.length * CONTACT_FOAM_PER_SAMPLE,
-    );
-    volume.frustumCulled = false;
-    volume.renderOrder = 4;
-    this.contactFoamGroup.add(volume);
-    this.contactFoamVolume = volume;
+    const collarMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
+      color: 0xf0f2eb,
+      map: this.foamBreakupTexture,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.NormalBlending,
+      fog: true,
+      side: THREE.DoubleSide,
+    }));
+    const sideGeometry = this.registerGeometry(new THREE.CylinderGeometry(0.38, 0.38, 4.4, 12));
+    sideGeometry.rotateX(Math.PI / 2);
+    const collar = new THREE.Group();
+    for (const side of [-1, 1]) {
+      const logFoam = new THREE.Mesh(sideGeometry, collarMaterial);
+      logFoam.position.set(1.35 * side, 0.08, 0);
+      logFoam.scale.set(1, 0.35, 1);
+      logFoam.renderOrder = 4;
+      collar.add(logFoam);
+    }
+    this.contactFoamGroup.add(collar);
+    this.hullFoamCollar = collar;
+    this.hullFoamMaterial = collarMaterial;
   }
 
   private createWakeRibbonGeometry(sections: readonly WakeSection[]): THREE.BufferGeometry {
@@ -1370,37 +1360,6 @@ class RaftController {
       this.wakeUniforms.uStrength.value = wakeStrength;
     }
 
-    const wakeVolume = this.wakeFoamVolume;
-    if (wakeVolume) {
-      const sides = [-1, 1] as const;
-      for (let sideIndex = 0; sideIndex < sides.length; sideIndex += 1) {
-        const side = sides[sideIndex];
-        for (let sectionIndex = 0; sectionIndex < WAKE_SECTIONS.length; sectionIndex += 1) {
-          const section = WAKE_SECTIONS[sectionIndex];
-          const bubbleScale = (0.50 + 0.70 * section.alpha) * (0.40 + 0.60 * wakeStrength);
-          for (let bubble = 0; bubble < WAKE_FOAM_PER_SECTION; bubble += 1) {
-            const scatter = WAKE_FOAM_SCATTER[bubble];
-            const bob = 0.03 * Math.sin(
-              elapsedSeconds * 2.15 + sectionIndex * 0.7 + sideIndex * 1.3 + bubble * 0.9,
-            );
-            this.foamDummy.position.set(
-              section.x * side * (1 - scatter.inward),
-              scatter.y + bob,
-              section.z + scatter.v * section.width,
-            );
-            this.foamDummy.rotation.set(0, 0, 0);
-            this.foamDummy.scale.setScalar(bubbleScale > 0.02 ? bubbleScale : 0);
-            this.foamDummy.updateMatrix();
-            wakeVolume.setMatrixAt(
-              (sideIndex * WAKE_SECTIONS.length + sectionIndex) * WAKE_FOAM_PER_SECTION + bubble,
-              this.foamDummy.matrix,
-            );
-          }
-        }
-      }
-      wakeVolume.instanceMatrix.needsUpdate = true;
-    }
-
     const sprayStrength = clamp(speedFactor * 0.7 + impactFactor * 0.95, 0, 1);
     for (const particle of this.sprayParticles) {
       if (particle.bursting) {
@@ -1459,6 +1418,8 @@ class RaftController {
     }
 
     this.contactFoamGroup.visible = true;
+    let wetFloor = 0;
+    let surfaceHeight = 0;
     for (let index = 0; index < this.sampleOffsets.length; index += 1) {
       const offset = this.sampleOffsets[index];
       this.sampleWorldPosition.copy(offset).applyAxisAngle(WORLD_UP, this.heading);
@@ -1493,39 +1454,18 @@ class RaftController {
       );
       ring.scale.setScalar(radius);
       ring.visible = false;
-
-      const volume = this.contactFoamVolume;
-      if (volume) {
-        const headingCos = Math.cos(this.heading);
-        const headingSin = Math.sin(this.heading);
-        const bubbleScale = alpha > 0.02 ? 0.42 + 1.05 * alpha : 0;
-        const pulse = 1 + 0.12 * compression;
-        for (let bubble = 0; bubble < CONTACT_FOAM_PER_SAMPLE; bubble += 1) {
-          const scatter = CONTACT_FOAM_SCATTER[bubble];
-          const bob = 0.03 * Math.sin(elapsedSeconds * 2.35 + index * 1.7 + bubble * 0.85);
-          const localX = scatter.x * headingCos - scatter.z * headingSin;
-          const localZ = scatter.x * headingSin + scatter.z * headingCos;
-          const instanceIndex = index * CONTACT_FOAM_PER_SAMPLE + bubble;
-          const hashRaw = Math.sin(instanceIndex * 127.1) * 43758.5453;
-          const hashFract = hashRaw - Math.floor(hashRaw);
-          const stretch = 0.7 + 0.5 * hashFract;
-          const yaw = hashFract * Math.PI * 2
-            + (hashFract < 0.5 ? -0.8 : 0.8) * elapsedSeconds;
-          const s = bubbleScale * stretch * pulse;
-          this.foamDummy.position.set(
-            this.sampleWorldPosition.x + localX,
-            height + scatter.y + bob,
-            this.sampleWorldPosition.z + localZ,
-          );
-          this.foamDummy.rotation.set(0, yaw, 0);
-          this.foamDummy.scale.set(1.35 * s, s, 0.62 * s);
-          this.foamDummy.updateMatrix();
-          volume.setMatrixAt(instanceIndex, this.foamDummy.matrix);
-        }
-      }
+      wetFloor += alpha;
+      surfaceHeight += height;
     }
-    if (this.contactFoamVolume) {
-      this.contactFoamVolume.instanceMatrix.needsUpdate = true;
+    const collar = this.hullFoamCollar;
+    const collarMaterial = this.hullFoamMaterial;
+    if (collar && collarMaterial) {
+      const meanAlpha = wetFloor / this.sampleOffsets.length;
+      const meanHeight = surfaceHeight / this.sampleOffsets.length;
+      collar.position.set(this.positionX, meanHeight, this.positionZ);
+      collar.rotation.y = this.heading;
+      collar.visible = meanAlpha > 0.02;
+      collarMaterial.opacity = 0.22 + 0.58 * meanAlpha;
     }
     this.emitContactSpray(elapsedSeconds);
   }
