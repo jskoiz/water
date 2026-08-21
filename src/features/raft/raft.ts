@@ -909,6 +909,8 @@ class RaftController {
     }
     const foamCardGeometry = this.registerGeometry(new THREE.PlaneGeometry(0.55, 0.55));
     foamCardGeometry.rotateX(-Math.PI / 2);
+    const hullCardGeometry = this.registerGeometry(new THREE.PlaneGeometry(0.38, 0.38));
+    hullCardGeometry.rotateX(-Math.PI / 2);
     const foamCardMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
       color: 0xffffff,
       map: this.foamBreakupTexture,
@@ -994,7 +996,7 @@ class RaftController {
     }
 
     const volume = new THREE.InstancedMesh(
-      foamCardGeometry,
+      hullCardGeometry,
       foamCardMaterial,
       this.sampleOffsets.length * CONTACT_FOAM_PER_SAMPLE,
     );
@@ -1377,6 +1379,7 @@ class RaftController {
               scatter.y + bob,
               section.z + scatter.v * section.width,
             );
+            this.foamDummy.rotation.set(0, 0, 0);
             this.foamDummy.scale.setScalar(bubbleScale > 0.02 ? bubbleScale : 0);
             this.foamDummy.updateMatrix();
             wakeVolume.setMatrixAt(
@@ -1480,30 +1483,34 @@ class RaftController {
         this.sampleWorldPosition.z,
       );
       ring.scale.setScalar(radius);
-      ring.visible = alpha > 0.02;
-      const material = ring.material;
-      if (material instanceof THREE.MeshBasicMaterial) {
-        material.opacity = alpha * 0.92;
-      }
+      ring.visible = false;
 
       const volume = this.contactFoamVolume;
       if (volume) {
         const headingCos = Math.cos(this.heading);
         const headingSin = Math.sin(this.heading);
         const bubbleScale = alpha > 0.02 ? 0.42 + 1.05 * alpha : 0;
+        const pulse = 1 + 0.12 * compression;
         for (let bubble = 0; bubble < CONTACT_FOAM_PER_SAMPLE; bubble += 1) {
           const scatter = CONTACT_FOAM_SCATTER[bubble];
           const bob = 0.03 * Math.sin(elapsedSeconds * 2.35 + index * 1.7 + bubble * 0.85);
           const localX = scatter.x * headingCos - scatter.z * headingSin;
           const localZ = scatter.x * headingSin + scatter.z * headingCos;
+          const instanceIndex = index * CONTACT_FOAM_PER_SAMPLE + bubble;
+          const hashRaw = Math.sin(instanceIndex * 127.1) * 43758.5453;
+          const hashFract = hashRaw - Math.floor(hashRaw);
+          const stretch = 0.7 + 0.5 * hashFract;
+          const yaw = hashFract * Math.PI * 2
+            + (hashFract < 0.5 ? -0.8 : 0.8) * elapsedSeconds;
+          const s = bubbleScale * stretch * pulse;
           this.foamDummy.position.set(
             this.sampleWorldPosition.x + localX,
             height + scatter.y + bob,
             this.sampleWorldPosition.z + localZ,
           );
-          this.foamDummy.scale.setScalar(bubbleScale);
+          this.foamDummy.rotation.set(0, yaw, 0);
+          this.foamDummy.scale.set(1.35 * s, s, 0.62 * s);
           this.foamDummy.updateMatrix();
-          const instanceIndex = index * CONTACT_FOAM_PER_SAMPLE + bubble;
           volume.setMatrixAt(instanceIndex, this.foamDummy.matrix);
         }
       }
