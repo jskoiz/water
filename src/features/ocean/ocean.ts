@@ -74,7 +74,7 @@ uniform vec3 uSunDirection;
 uniform sampler2D uFoamMap;
 uniform sampler2D uSceneColor;
 uniform sampler2D uSceneDepth;
-uniform samplerCube uCubeMap;
+uniform sampler2D uEnvEquirect;
 uniform float uCameraNear;
 uniform float uCameraFar;
 uniform vec2 uResolution;
@@ -141,6 +141,18 @@ vec3 skyRadiance(vec3 direction) {
 float sceneEyeDepth(vec2 uv) {
   float depth = texture2D(uSceneDepth, uv).x;
   return -perspectiveDepthToViewZ(depth, uCameraNear, uCameraFar);
+}
+
+// Equirect miss from the CubeCamera blit. Soften the ±π meridian with a
+// 2-tap blend so grazing rays do not show a vertical face cut.
+vec3 sampleEnvEquirect(vec3 direction) {
+  vec3 R = normalize(direction);
+  float u = atan(R.z, R.x) * 0.15915494309 + 0.5;
+  float v = asin(clamp(R.y, -1.0, 1.0)) * 0.31830988618 + 0.5;
+  vec3 a = texture2D(uEnvEquirect, vec2(u, v)).rgb;
+  vec3 b = texture2D(uEnvEquirect, vec2(1.0 - u, v)).rgb;
+  float seam = 1.0 - smoothstep(0.0, 0.02, min(u, 1.0 - u));
+  return mix(a, 0.5 * (a + b), seam);
 }
 
 // WaterThreeJS SSR: march R through the pre-ocean color+depth target.
@@ -233,7 +245,7 @@ void main() {
   float fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - cosTheta, 5.0);
   vec3 reflectedDirection = normalize(reflect(-viewDirection, normal));
   vec4 sceneHit = marchSceneReflection(vWorldPosition, reflectedDirection);
-  vec3 cubeSky = textureCube(uCubeMap, reflectedDirection, 1.5).rgb;
+  vec3 cubeSky = sampleEnvEquirect(reflectedDirection);
   vec3 reflected = mix(cubeSky, sceneHit.rgb, clamp(sceneHit.a, 0.0, 1.0));
 
   // WaterThreeJS refraction: peek through the pre-ocean color+depth target.
@@ -367,7 +379,7 @@ interface OceanUniforms {
   uResolution: { value: THREE.Vector2 };
   uViewMatrix: { value: THREE.Matrix4 };
   uProjMatrix: { value: THREE.Matrix4 };
-  uCubeMap: { value: THREE.CubeTexture | null };
+  uEnvEquirect: { value: THREE.Texture | null };
 }
 
 function sceneTextureSize(width: number, height: number, pixelRatio = 1): {
@@ -407,6 +419,72 @@ function createCubeMissTarget(): THREE.WebGLCubeRenderTarget {
   });
   target.texture.colorSpace = THREE.LinearSRGBColorSpace;
   return target;
+}
+
+function createEquirectMissTarget(): THREE.WebGLRenderTarget {
+  const target = new THREE.WebGLRenderTarget(2048, 1024, {
+    type: THREE.HalfFloatType,
+    depthBuffer: false,
+    samples: 0,
+  });
+  target.texture.colorSpace = THREE.LinearSRGBColorSpace;
+  target.texture.wrapS = THREE.RepeatWrapping;
+  target.texture.wrapT = THREE.ClampToEdgeWrapping;
+  target.texture.minFilter = THREE.LinearFilter;
+  target.texture.magFilter = THREE.LinearFilter;
+  target.texture.generateMipmaps = false;
+  return target;
+}
+
+const CUBE_TO_EQUIRECT_VERTEX = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+
+const CUBE_TO_EQUIRECT_FRAGMENT = /* glsl */ `
+uniform samplerCube uCubeSource;
+varying vec2 vUv;
+
+void main() {
+  float theta = (vUv.x - 0.5) * 6.28318530718;
+  float phi = (vUv.y - 0.5) * 3.14159265359;
+  float cosPhi = cos(phi);
+  vec3 direction = normalize(vec3(cosPhi * cos(theta), sin(phi), cosPhi * sin(theta)));
+  gl_FragColor = textureCube(uCubeSource, direction);
+}
+`;
+
+function createCubeToEquirectBlit(): {
+  scene: THREE.Scene;
+  camera: THREE.OrthographicCamera;
+  material: THREE.ShaderMaterial;
+  dispose: () => void;
+} {
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const scene = new THREE.Scene();
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uCubeSource: { value: null as THREE.CubeTexture | null },
+    },
+    vertexShader: CUBE_TO_EQUIRECT_VERTEX,
+    fragmentShader: CUBE_TO_EQUIRECT_FRAGMENT,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+  scene.add(mesh);
+  return {
+    scene,
+    camera,
+    material,
+    dispose: () => {
+      mesh.geometry.dispose();
+      material.dispose();
+    },
+  };
 }
 
 function renderScenePrepass(
@@ -465,6 +543,8 @@ export function createOceanFeature(): RuntimeFeature {
   let sceneTarget: THREE.WebGLRenderTarget | null = null;
   let cubeTarget: THREE.WebGLCubeRenderTarget | null = null;
   let cubeCamera: THREE.CubeCamera | null = null;
+  let equirectTarget: THREE.WebGLRenderTarget | null = null;
+  let cubeToEquirect: ReturnType<typeof createCubeToEquirectBlit> | null = null;
   let lastCubeSun = new THREE.Vector3();
   let capturingCube = false;
   let disposed = false;
@@ -472,7 +552,7 @@ export function createOceanFeature(): RuntimeFeature {
   let previousOnShaderError: THREE.WebGLRenderer['debug']['onShaderError'];
 
   const captureCubeMiss = (gl: THREE.WebGLRenderer): void => {
-    if (!scene || !oceanMesh || !cubeCamera || !cubeTarget || !oceanUniforms) {
+    if (!scene || !oceanMesh || !cubeCamera || !cubeTarget || !equirectTarget || !cubeToEquirect || !oceanUniforms) {
       return;
     }
     capturingCube = true;
@@ -503,10 +583,13 @@ export function createOceanFeature(): RuntimeFeature {
       gl.toneMapping = THREE.NoToneMapping;
       gl.outputColorSpace = THREE.LinearSRGBColorSpace;
       cubeCamera.update(gl, scene);
-      // Force mip rebuild so grazing miss samples soft-filter across faces.
       cubeTarget.texture.needsUpdate = true;
+      cubeToEquirect.material.uniforms.uCubeSource.value = cubeTarget.texture;
+      gl.setRenderTarget(equirectTarget);
+      gl.clear();
+      gl.render(cubeToEquirect.scene, cubeToEquirect.camera);
       lastCubeSun.copy(oceanUniforms.uSunDirection.value);
-      oceanUniforms.uCubeMap.value = cubeTarget.texture;
+      oceanUniforms.uEnvEquirect.value = equirectTarget.texture;
     } finally {
       for (let index = 0; index < hidden.length; index += 1) {
         hidden[index].visible = previousVisible[index];
@@ -527,7 +610,7 @@ export function createOceanFeature(): RuntimeFeature {
     if (oceanUniforms) {
       oceanUniforms.uSceneColor.value = null;
       oceanUniforms.uSceneDepth.value = null;
-      oceanUniforms.uCubeMap.value = null;
+      oceanUniforms.uEnvEquirect.value = null;
     }
   };
 
@@ -588,6 +671,8 @@ export function createOceanFeature(): RuntimeFeature {
         cubeCamera.name = 'ocean-cube-miss';
         cubeCamera.position.set(0, 0, 0);
         root.add(cubeCamera);
+        equirectTarget = createEquirectMissTarget();
+        cubeToEquirect = createCubeToEquirectBlit();
         oceanUniforms = {
           uTime: { value: 0 },
           uSunDirection: { value: environment.sunDirection.clone() },
@@ -599,7 +684,7 @@ export function createOceanFeature(): RuntimeFeature {
           uResolution: { value: new THREE.Vector2(size.width, size.height) },
           uViewMatrix: { value: context.camera.matrixWorldInverse.clone() },
           uProjMatrix: { value: context.camera.projectionMatrix.clone() },
-          uCubeMap: { value: cubeTarget.texture },
+          uEnvEquirect: { value: equirectTarget.texture },
         };
 
         const oceanMaterial = new THREE.ShaderMaterial({
@@ -668,8 +753,12 @@ export function createOceanFeature(): RuntimeFeature {
         detachOwnedEnvironmentTextures();
         sceneTarget?.dispose();
         cubeTarget?.dispose();
+        equirectTarget?.dispose();
+        cubeToEquirect?.dispose();
         sceneTarget = null;
         cubeTarget = null;
+        equirectTarget = null;
+        cubeToEquirect = null;
         cubeCamera = null;
         scene.onBeforeRender = () => undefined;
         if (oceanMesh) {
@@ -733,8 +822,12 @@ export function createOceanFeature(): RuntimeFeature {
       detachOwnedEnvironmentTextures();
       sceneTarget?.dispose();
       cubeTarget?.dispose();
+      equirectTarget?.dispose();
+      cubeToEquirect?.dispose();
       sceneTarget = null;
       cubeTarget = null;
+      equirectTarget = null;
+      cubeToEquirect = null;
       cubeCamera = null;
       if (scene) {
         scene.onBeforeRender = () => undefined;
