@@ -88,6 +88,32 @@ float sunIntensity(float zenithCosine) {
   return solarIrradiance * max(0.0, 1.0 - exp(-((cutoffAngle - angle) / steepness)));
 }
 
+vec2 cloudField(float cloudAzimuth, float altitude, vec2 sunXZ) {
+  vec2 cloudCoordinates = vec2(
+    cloudAzimuth * 1.85 + altitude * 0.70
+      + sin(altitude * 13.0 + cloudAzimuth * 2.4) * 0.24,
+    altitude * 6.8 + sin(cloudAzimuth * 2.8 + altitude * 4.0) * 0.34
+  );
+  float cloudFar = cloudNoise(cloudCoordinates * 0.92 + vec2(2.4, -0.7));
+  float cloudNear = cloudNoise(cloudCoordinates * 2.70 - vec2(4.8, 1.9));
+  float lowCloudEnvelope = smoothstep(0.025, 0.16, altitude)
+    * (1.0 - smoothstep(0.46, 0.68, altitude));
+  float highCloudEnvelope = smoothstep(0.23, 0.39, altitude)
+    * (1.0 - smoothstep(0.83, 0.985, altitude));
+  float cloudBody = smoothstep(0.31, 0.57, cloudFar + (cloudNear - 0.5) * 0.22);
+  float cloudDetail = smoothstep(0.36, 0.70, cloudNear);
+  float lowCloud = cloudBody * lowCloudEnvelope;
+  float highCloud = smoothstep(0.36, 0.61, mix(cloudFar, cloudNear, 0.34))
+    * highCloudEnvelope;
+  float density = clamp(lowCloud * 0.92 + highCloud * 0.80
+    + lowCloud * highCloud * 0.20, 0.0, 1.0);
+  density = clamp(density + cloudDetail * (lowCloudEnvelope * 0.24
+    + highCloudEnvelope * 0.20), 0.0, 1.0);
+  vec2 sunCloudOffset = normalize(sunXZ + vec2(0.0001)) * 0.19;
+  float shadow = noise2(cloudCoordinates * 2.65 - sunCloudOffset * 2.4 + vec2(7.1, -3.6));
+  return vec2(density, shadow);
+}
+
 void main() {
   vec3 direction = normalize(vSkyDirection);
   vec3 sunDirection = normalize(uSunDirection);
@@ -122,34 +148,17 @@ void main() {
   skyColor += extinction * vec3(0.000, 0.005, 0.024) * smoothstep(0.08, 0.92, altitude);
   skyColor += horizonAerialTint * horizon * horizon * 0.064;
 
-  // Two correlated, four-octave cloud fields give broad maritime bodies,
-  // higher stratocumulus, and small structure without a texture lookup or
-  // an unbounded ray-march.  The overlapping envelopes avoid a flat stripe.
+  // Two correlated, four-octave cloud fields. 2-sample atan across ±π so the
+  // SphereGeometry φ-cut does not flash a vertical cloud edge.
   float cloudAzimuth = atan(direction.z, direction.x);
-  vec2 cloudCoordinates = vec2(
-    cloudAzimuth * 1.85 + altitude * 0.70
-      + sin(altitude * 13.0 + cloudAzimuth * 2.4) * 0.24,
-    altitude * 6.8 + sin(cloudAzimuth * 2.8 + altitude * 4.0) * 0.34
-  );
-  float cloudFar = cloudNoise(cloudCoordinates * 0.92 + vec2(2.4, -0.7));
-  float cloudNear = cloudNoise(cloudCoordinates * 2.70 - vec2(4.8, 1.9));
-  float lowCloudEnvelope = smoothstep(0.025, 0.16, altitude)
-    * (1.0 - smoothstep(0.46, 0.68, altitude));
-  float highCloudEnvelope = smoothstep(0.23, 0.39, altitude)
-    * (1.0 - smoothstep(0.83, 0.985, altitude));
-  float cloudBody = smoothstep(0.31, 0.57, cloudFar + (cloudNear - 0.5) * 0.22);
-  float cloudDetail = smoothstep(0.36, 0.70, cloudNear);
-  float lowCloud = cloudBody * lowCloudEnvelope;
-  float highCloud = smoothstep(0.36, 0.61, mix(cloudFar, cloudNear, 0.34))
-    * highCloudEnvelope;
-  float cloudDensity = clamp(lowCloud * 0.92 + highCloud * 0.80
-    + lowCloud * highCloud * 0.20, 0.0, 1.0);
-  cloudDensity = clamp(cloudDensity + cloudDetail * (lowCloudEnvelope * 0.24
-    + highCloudEnvelope * 0.20), 0.0, 1.0);
+  float cloudAzimuthWrap = cloudAzimuth - sign(cloudAzimuth) * 6.28318530718;
+  float meridianMix = smoothstep(3.14159265359 - 0.12, 3.14159265359, abs(cloudAzimuth));
+  vec2 cloudA = cloudField(cloudAzimuth, altitude, sunDirection.xz);
+  vec2 cloudB = cloudField(cloudAzimuthWrap, altitude, sunDirection.xz);
+  float cloudDensity = mix(cloudA.x, 0.5 * (cloudA.x + cloudB.x), meridianMix);
   // Cloud break along the sun so the disc punches a glitter path on the water.
   cloudDensity *= 1.0 - pow(max(cosineToSun, 0.0), 4.0) * 0.85;
-  vec2 sunCloudOffset = normalize(sunDirection.xz + vec2(0.0001)) * 0.19;
-  float cloudShadowNoise = noise2(cloudCoordinates * 2.65 - sunCloudOffset * 2.4 + vec2(7.1, -3.6));
+  float cloudShadowNoise = mix(cloudA.y, 0.5 * (cloudA.y + cloudB.y), meridianMix);
   float cloudSelfShadow = smoothstep(0.25, 0.72, cloudShadowNoise);
   float sunFacingCloud = clamp(dot(direction, sunDirection) * 0.5 + 0.5, 0.0, 1.0);
   float cloudLight = mix(0.18, 0.98, sunFacingCloud) * mix(0.40, 1.0, cloudSelfShadow);
@@ -391,6 +400,20 @@ export function createMarineEnvironment(
   sky.name = 'marine-sky-dome';
   sky.frustumCulled = false;
   sky.renderOrder = -100;
+  // SphereGeometry φ-cut is local -X. Rotate it onto -D0 so a run (looks
+  // down D0 ≈ +X) sees the seam behind the stern, not above the mast.
+  const windSeaX = 0.970;
+  const windSeaZ = 0.243;
+  sky.rotation.y = Math.atan2(-windSeaZ, windSeaX);
+  const yaw = sky.rotation.y;
+  const cosYaw = Math.cos(yaw);
+  const sinYaw = Math.sin(yaw);
+  // Shader uses local position; put the world sun into that frame.
+  skyMaterial.uniforms.uSunDirection.value.set(
+    normalizedSunDirection.x * cosYaw + normalizedSunDirection.z * sinYaw,
+    normalizedSunDirection.y,
+    -normalizedSunDirection.x * sinYaw + normalizedSunDirection.z * cosYaw,
+  ).normalize();
   root.add(sky);
 
   const sun = new THREE.DirectionalLight(0xffd8b5, 3.05);
