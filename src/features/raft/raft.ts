@@ -1265,7 +1265,7 @@ class RaftController {
     const impactFactor = clamp(this.wakeImpact, 0, 1);
     // Wake is boat speed first, plus a slap from heave rate. Spring is read-only.
     const wakeStrength = clamp(
-      smoothstep(0.35, 2.8, this.speedMetersPerSecond)
+      smoothstep(0.8, 4.5, this.speedMetersPerSecond)
       + 0.2 * Math.abs(this.heaveVelocity),
       0,
       1,
@@ -1359,7 +1359,11 @@ class RaftController {
         1,
       );
       this.sampleCompressions[index] = compression;
-      const alpha = clamp(compression * this.speedMetersPerSecond, 0, 1);
+      const alpha = clamp(
+        compression * smoothstep(0.8, 4.5, this.speedMetersPerSecond),
+        0,
+        1,
+      );
       const radius = 0.35 + 0.45 * compression;
       const ring = this.contactRings[index];
       ring.position.set(
@@ -1385,7 +1389,7 @@ class RaftController {
     const speed = this.speedMetersPerSecond;
     for (let index = 0; index < this.sampleOffsets.length; index += 1) {
       const signal = Math.max(heave, this.sampleCompressions[index] * speed);
-      if (signal <= 0.45 || elapsedSeconds - this.contactBurstAt[index] < 0.28) {
+      if (signal <= 0.85 || elapsedSeconds - this.contactBurstAt[index] < 0.28) {
         continue;
       }
       this.contactBurstAt[index] = elapsedSeconds;
