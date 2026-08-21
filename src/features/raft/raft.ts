@@ -390,6 +390,7 @@ class RaftController {
   private positionZ = 0;
   private heading = 0;
   private speedMetersPerSecond = 0;
+  private leewayMetersPerSecond = 0;
   private sailPower = 0.72;
   private apparentWindX = WIND_DIR_X * WIND_SPEED_MPS;
   private apparentWindZ = WIND_DIR_Z * WIND_SPEED_MPS;
@@ -500,6 +501,7 @@ class RaftController {
     this.heaveVelocity = 0;
     this.pitchVelocity = 0;
     this.rollVelocity = 0;
+    this.leewayMetersPerSecond = 0;
     this.previousHeaveTarget = 0;
     this.wakeImpact = 0;
     this.surfaceTargetInitialized = false;
@@ -963,8 +965,25 @@ class RaftController {
     this.speedMetersPerSecond = damp(this.speedMetersPerSecond, targetSpeed, 1.6, deltaSeconds);
     const turnRate = 0.2 + this.sailPower * 0.72;
     this.heading += this.steering * turnRate * deltaSeconds;
-    this.positionX += Math.sin(this.heading) * this.speedMetersPerSecond * deltaSeconds;
-    this.positionZ -= Math.cos(this.heading) * this.speedMetersPerSecond * deltaSeconds;
+    const courseX = Math.sin(this.heading);
+    const courseZ = -Math.cos(this.heading);
+    const perpX = Math.cos(this.heading);
+    const perpZ = Math.sin(this.heading);
+    const apparentLateral = this.apparentWindX * perpX + this.apparentWindZ * perpZ;
+    // v_lat' = -0.55 A_lat - 1.8 v_lat. A beat crabs; a run has A_lat ≈ 0.
+    const leewayDecay = Math.exp(-1.8 * deltaSeconds);
+    this.leewayMetersPerSecond = this.leewayMetersPerSecond * leewayDecay
+      - (0.55 / 1.8) * apparentLateral * (1 - leewayDecay);
+    const maxLeeway = 0.35 * Math.abs(this.speedMetersPerSecond);
+    this.leewayMetersPerSecond = clamp(
+      this.leewayMetersPerSecond,
+      -maxLeeway,
+      maxLeeway,
+    );
+    this.positionX += courseX * this.speedMetersPerSecond * deltaSeconds
+      + perpX * this.leewayMetersPerSecond * deltaSeconds;
+    this.positionZ += courseZ * this.speedMetersPerSecond * deltaSeconds
+      + perpZ * this.leewayMetersPerSecond * deltaSeconds;
   }
 
   private updateSurface(deltaSeconds: number, elapsedSeconds: number): void {
@@ -1141,6 +1160,7 @@ class RaftController {
       this.positionZ,
       this.heading,
       this.speedMetersPerSecond,
+      this.leewayMetersPerSecond,
       this.pitch,
       this.roll,
       this.heaveVelocity,
