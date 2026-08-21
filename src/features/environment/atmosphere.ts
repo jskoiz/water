@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 export interface MarineEnvironmentBuild {
   readonly root: THREE.Group;
-  readonly sky: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
+  readonly sky: THREE.Mesh<THREE.IcosahedronGeometry, THREE.ShaderMaterial>;
   readonly sunDirection: THREE.Vector3;
 }
 
@@ -149,7 +149,7 @@ void main() {
   skyColor += horizonAerialTint * horizon * horizon * 0.064;
 
   // Two correlated, four-octave cloud fields. 2-sample atan across ±π so the
-  // SphereGeometry φ-cut does not flash a vertical cloud edge.
+  // atan wrap still 2-sampled so the cloud field does not flash a vertical edge.
   float cloudAzimuth = atan(direction.z, direction.x);
   float cloudAzimuthWrap = cloudAzimuth - sign(cloudAzimuth) * 6.28318530718;
   float meridianMix = smoothstep(3.14159265359 - 0.12, 3.14159265359, abs(cloudAzimuth));
@@ -395,25 +395,12 @@ export function createMarineEnvironment(
     dithering: true,
     toneMapped: true,
   });
-  const skyGeometry = new THREE.SphereGeometry(600, 96, 48);
+  const skyGeometry = new THREE.IcosahedronGeometry(600, 5);
   const sky = new THREE.Mesh(skyGeometry, skyMaterial);
   sky.name = 'marine-sky-dome';
   sky.frustumCulled = false;
   sky.renderOrder = -100;
-  // SphereGeometry φ-cut is local -X. Rotate it onto -D0 so a run (looks
-  // down D0 ≈ +X) sees the seam behind the stern, not above the mast.
-  const windSeaX = 0.970;
-  const windSeaZ = 0.243;
-  sky.rotation.y = Math.atan2(-windSeaZ, windSeaX);
-  const yaw = sky.rotation.y;
-  const cosYaw = Math.cos(yaw);
-  const sinYaw = Math.sin(yaw);
-  // Shader uses local position; put the world sun into that frame.
-  skyMaterial.uniforms.uSunDirection.value.set(
-    normalizedSunDirection.x * cosYaw + normalizedSunDirection.z * sinYaw,
-    normalizedSunDirection.y,
-    -normalizedSunDirection.x * sinYaw + normalizedSunDirection.z * cosYaw,
-  ).normalize();
+  // No UV wrap, so vSkyDirection interpolates without a φ-cut. Sun stays world-space.
   root.add(sky);
 
   const sun = new THREE.DirectionalLight(0xffd8b5, 3.05);
