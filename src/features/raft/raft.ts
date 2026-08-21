@@ -110,16 +110,13 @@ const WAKE_SECTIONS: readonly WakeSection[] = [
   { x: 1.39, z: 8.5, width: 0.4, alpha: 0.08 },
   { x: 1.45, z: 10.5, width: 0.34, alpha: 0 },
 ];
-const WAKE_FOAM_PER_SECTION = 8;
+const WAKE_FOAM_PER_SECTION = 5;
 const WAKE_FOAM_SCATTER = [
   { inward: 0.00, v: -0.10, y: 0.06 },
-  { inward: 0.04, v: 0.12, y: 0.18 },
-  { inward: 0.08, v: -0.04, y: 0.11 },
-  { inward: 0.02, v: 0.18, y: 0.26 },
-  { inward: 0.22, v: 0.06, y: 0.09 },
-  { inward: 0.38, v: -0.14, y: 0.22 },
-  { inward: 0.54, v: 0.16, y: 0.14 },
-  { inward: 0.70, v: -0.06, y: 0.30 },
+  { inward: 0.03, v: 0.12, y: 0.14 },
+  { inward: 0.06, v: -0.04, y: 0.09 },
+  { inward: 0.09, v: 0.16, y: 0.18 },
+  { inward: 0.12, v: -0.08, y: 0.11 },
 ] as const;
 
 interface SpringState {
@@ -907,8 +904,8 @@ class RaftController {
     if (!this.foamBreakupTexture) {
       throw new Error('Foam breakup texture must be loaded before building wake foam.');
     }
-    const foamCardGeometry = this.registerGeometry(new THREE.PlaneGeometry(0.55, 0.55));
-    foamCardGeometry.rotateX(-Math.PI / 2);
+    const wakeCardGeometry = this.registerGeometry(new THREE.PlaneGeometry(0.28, 0.28));
+    wakeCardGeometry.rotateX(-Math.PI / 2);
     const hullCardGeometry = this.registerGeometry(new THREE.PlaneGeometry(0.38, 0.38));
     hullCardGeometry.rotateX(-Math.PI / 2);
     const foamCardMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
@@ -923,9 +920,21 @@ class RaftController {
       fog: true,
       side: THREE.DoubleSide,
     }));
+    const wakeCardMaterial = this.registerMaterial(new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      map: this.foamBreakupTexture,
+      transparent: true,
+      opacity: 0.30,
+      alphaTest: 0.08,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+      fog: true,
+      side: THREE.DoubleSide,
+    }));
     const wakeVolume = new THREE.InstancedMesh(
-      foamCardGeometry,
-      foamCardMaterial,
+      wakeCardGeometry,
+      wakeCardMaterial,
       WAKE_SECTIONS.length * 2 * WAKE_FOAM_PER_SECTION,
     );
     wakeVolume.frustumCulled = false;
