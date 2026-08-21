@@ -77,6 +77,7 @@ uniform sampler2D uSceneDepth;
 uniform samplerCube uCubeMap;
 uniform float uCameraNear;
 uniform float uCameraFar;
+uniform vec2 uResolution;
 uniform mat4 uViewMatrix;
 uniform mat4 uProjMatrix;
 
@@ -235,15 +236,21 @@ void main() {
   vec3 cubeSky = textureCube(uCubeMap, reflectedDirection).rgb;
   vec3 reflected = mix(cubeSky, sceneHit.rgb, clamp(sceneHit.a, 0.0, 1.0));
 
-  // Use the wave height as a depth proxy for a finite water column: troughs
-  // read denser and bluer while crests receive more transmitted sky color.
+  // WaterThreeJS refraction: peek through the pre-ocean color+depth target.
+  // objectHit is 0 off-screen or on the far plane so empty sky doesn't leak.
   float shallowFactor = smoothstep(-0.58, 0.46, vWaveHeight);
-  float waterDepth = mix(2.4, 0.54, shallowFactor);
   vec3 shallowColor = vec3(0.008, 0.105, 0.18);
   vec3 deepColor = vec3(0.0015, 0.018, 0.045);
   vec3 bodyColor = mix(deepColor, shallowColor, shallowFactor);
-  vec3 absorption = exp(-vec3(0.26, 0.95, 1.80) * waterDepth);
-  vec3 transmittedWater = bodyColor * (0.52 + absorption * 0.68);
+  vec2 rUV = gl_FragCoord.xy / uResolution + normal.xz * 0.05;
+  float inBounds = step(0.0, rUV.x) * step(rUV.x, 1.0) * step(0.0, rUV.y) * step(rUV.y, 1.0);
+  vec2 safeUV = clamp(rUV, vec2(0.001), vec2(0.999));
+  float sceneEye = sceneEyeDepth(safeUV);
+  float waterEye = -perspectiveDepthToViewZ(gl_FragCoord.z, uCameraNear, uCameraFar);
+  float thickness = max(0.0, sceneEye - waterEye);
+  vec3 transmittance = exp(-vec3(0.26, 0.95, 1.80) * thickness);
+  float objectHit = inBounds * step(sceneEye, uCameraFar * 0.97);
+  vec3 transmittedWater = mix(bodyColor, texture2D(uSceneColor, safeUV).rgb * transmittance, objectHit);
   vec3 waterColor = mix(transmittedWater, reflected, fresnel);
   vec3 foamColor = mix(vec3(0.16, 0.37, 0.42), vec3(0.72, 0.85, 0.81), breakup);
   waterColor = mix(waterColor, foamColor, foam * 0.52);
@@ -357,6 +364,7 @@ interface OceanUniforms {
   uSceneDepth: { value: THREE.Texture | null };
   uCameraNear: { value: number };
   uCameraFar: { value: number };
+  uResolution: { value: THREE.Vector2 };
   uViewMatrix: { value: THREE.Matrix4 };
   uProjMatrix: { value: THREE.Matrix4 };
   uCubeMap: { value: THREE.CubeTexture | null };
@@ -411,6 +419,7 @@ function renderScenePrepass(
 ): void {
   uniforms.uViewMatrix.value.copy(camera.matrixWorldInverse);
   uniforms.uProjMatrix.value.copy(camera.projectionMatrix);
+  renderer.getDrawingBufferSize(uniforms.uResolution.value);
   if (camera instanceof THREE.PerspectiveCamera) {
     uniforms.uCameraNear.value = camera.near;
     uniforms.uCameraFar.value = camera.far;
@@ -585,6 +594,7 @@ export function createOceanFeature(): RuntimeFeature {
           uSceneDepth: { value: sceneTarget.depthTexture },
           uCameraNear: { value: context.camera.near },
           uCameraFar: { value: context.camera.far },
+          uResolution: { value: new THREE.Vector2(size.width, size.height) },
           uViewMatrix: { value: context.camera.matrixWorldInverse.clone() },
           uProjMatrix: { value: context.camera.projectionMatrix.clone() },
           uCubeMap: { value: cubeTarget.texture },
@@ -702,6 +712,7 @@ export function createOceanFeature(): RuntimeFeature {
         context.viewport.height,
         context.viewport.pixelRatio,
       );
+      oceanUniforms.uResolution.value.set(size.width, size.height);
       if (sceneTarget.width !== size.width || sceneTarget.height !== size.height) {
         sceneTarget.setSize(size.width, size.height);
         bindSceneTarget(sceneTarget);
