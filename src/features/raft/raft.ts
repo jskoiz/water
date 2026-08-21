@@ -414,6 +414,8 @@ class RaftController {
   private readonly targetOffset = new THREE.Vector3();
   private readonly sampleHeights = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   private readonly sprayParticles: SprayParticle[] = [];
+  private readonly plumeCards: THREE.Sprite[] = [];
+  private readonly plumeMaterials: THREE.SpriteMaterial[] = [];
   private readonly sampleCompressions = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   private readonly contactBurstAt = [-1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9];
   private sprayEmitIndex = 0;
@@ -575,6 +577,8 @@ class RaftController {
     this.materials.clear();
     this.textures.clear();
     this.sprayParticles.length = 0;
+    this.plumeCards.length = 0;
+    this.plumeMaterials.length = 0;
     this.sailGeometry = null;
     this.sailBasePositions = null;
     this.sailBillowWeights = null;
@@ -971,6 +975,32 @@ class RaftController {
         burstDirZ: 0.70710678,
         burstStrength: 0,
       });
+    }
+    const plumeMap = this.foamBreakupTexture;
+    const plumeSlots = [
+      { x: -0.62, y: 0.52, z: -2.02, scale: 1.05 },
+      { x: 0, y: 0.78, z: -2.18, scale: 1.42 },
+      { x: 0.62, y: 0.52, z: -2.02, scale: 1.05 },
+    ] as const;
+    for (const slot of plumeSlots) {
+      const material = this.registerMaterial(new THREE.SpriteMaterial({
+        map: plumeMap,
+        color: 0xf4f1ea,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.NormalBlending,
+        fog: true,
+      }));
+      const card = new THREE.Sprite(material);
+      card.position.set(slot.x, slot.y, slot.z);
+      card.scale.set(slot.scale, slot.scale * 1.35, 1);
+      card.renderOrder = 2;
+      card.visible = false;
+      this.raftGroup.add(card);
+      this.plumeCards.push(card);
+      this.plumeMaterials.push(material);
     }
     this.raftGroup.add(this.wakeGroup);
 
@@ -1413,50 +1443,25 @@ class RaftController {
     }
 
     const sprayStrength = clamp(speedFactor * 0.7 + impactFactor * 0.95, 0, 1);
-    for (const particle of this.sprayParticles) {
-      if (particle.bursting) {
-        const age = elapsedSeconds - particle.burstStart;
-        const life = 0.3;
-        if (age >= 0 && age < life) {
-          const travel = age / life;
-          const dist = 0.62 + particle.burstStrength * 0.7;
-          particle.mesh.position.set(
-            particle.burstOriginX + particle.burstDirX * travel * dist,
-            particle.burstOriginY + particle.burstDirY * travel * dist,
-            particle.burstOriginZ + particle.burstDirZ * travel * dist,
-          );
-          particle.mesh.visible = true;
-          const size = particle.size * (0.5 + particle.burstStrength * 0.35) * (1 - travel * 0.55);
-          particle.mesh.scale.set(size * 0.22, size * 2.6, size * 0.18);
-          continue;
-        }
-        particle.bursting = false;
-      }
-      const phase = elapsedSeconds * (1.8 + particle.spread + speedFactor * 0.75) + particle.phase;
-      const travel = (elapsedSeconds * (
-        0.45
-        + speedFactor * 0.9
-        + impactFactor * 1.45
-      ) + particle.phase * 0.14) % 1;
-      const dissipation = 1 - travel;
-      const launchHeight = (0.14 + speedFactor * 0.2 + impactFactor * 0.56) * 2.4;
-      const launchDistance = 0.68 + speedFactor * 1.2 + impactFactor * 1.45;
-      particle.mesh.position.x = particle.baseX
-        + Math.sin(phase) * (0.08 + speedFactor * 0.04 + impactFactor * 0.1);
-      particle.mesh.position.y = particle.baseY
-        + Math.abs(Math.sin(phase * 0.8)) * launchHeight * (0.35 + particle.spread * 0.65);
-      particle.mesh.position.z = particle.baseZ + travel * launchDistance;
-      particle.mesh.visible = sprayStrength > 0.035 && dissipation > 0.025;
-      // Elongated, dissipating droplets read as blown spray rather than static
-      // spheres. A small impact boost produces a short burst on hard landings.
-      const size = particle.size
-        * (0.24 + sprayStrength * 0.68)
-        * (0.36 + dissipation * 0.64);
-      particle.mesh.scale.set(
-        size * (0.22 + particle.spread * 0.08),
-        size * (2.15 + impactFactor * 0.7),
-        size * (0.18 + speedFactor * 0.1),
+    for (let index = 0; index < this.plumeCards.length; index += 1) {
+      const card = this.plumeCards[index];
+      const material = this.plumeMaterials[index];
+      const slotScale = 1.05 + index * 0.18;
+      const pulse = 0.86 + 0.14 * Math.sin(elapsedSeconds * (2.4 + index * 0.7) + index);
+      const visible = sprayStrength > 0.04;
+      card.visible = visible;
+      card.position.y = (index === 1 ? 0.78 : 0.52) + sprayStrength * 0.22
+        + Math.sin(elapsedSeconds * 3.1 + index) * 0.06;
+      card.scale.set(
+        slotScale * (0.72 + sprayStrength * 0.55) * pulse,
+        slotScale * 1.35 * (0.78 + sprayStrength * 0.7) * pulse,
+        1,
       );
+      material.opacity = visible ? 0.18 + sprayStrength * 0.42 : 0;
+      material.rotation = Math.sin(elapsedSeconds * 1.6 + index * 1.1) * 0.12;
+    }
+    for (const particle of this.sprayParticles) {
+      particle.mesh.visible = false;
     }
 
     this.updateContactFoam(elapsedSeconds);
