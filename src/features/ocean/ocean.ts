@@ -233,7 +233,7 @@ void main() {
   float fresnel = WATER_F0 + (1.0 - WATER_F0) * pow(1.0 - cosTheta, 5.0);
   vec3 reflectedDirection = normalize(reflect(-viewDirection, normal));
   vec4 sceneHit = marchSceneReflection(vWorldPosition, reflectedDirection);
-  vec3 cubeSky = textureCube(uCubeMap, reflectedDirection).rgb;
+  vec3 cubeSky = textureCube(uCubeMap, reflectedDirection, 1.5).rgb;
   vec3 reflected = mix(cubeSky, sceneHit.rgb, clamp(sceneHit.a, 0.0, 1.0));
 
   // WaterThreeJS refraction: peek through the pre-ocean color+depth target.
@@ -398,7 +398,7 @@ function createSceneTarget(width: number, height: number): THREE.WebGLRenderTarg
 }
 
 function createCubeMissTarget(): THREE.WebGLCubeRenderTarget {
-  const target = new THREE.WebGLCubeRenderTarget(512, {
+  const target = new THREE.WebGLCubeRenderTarget(1024, {
     type: THREE.HalfFloatType,
     depthBuffer: true,
     generateMipmaps: true,
@@ -503,6 +503,8 @@ export function createOceanFeature(): RuntimeFeature {
       gl.toneMapping = THREE.NoToneMapping;
       gl.outputColorSpace = THREE.LinearSRGBColorSpace;
       cubeCamera.update(gl, scene);
+      // Force mip rebuild so grazing miss samples soft-filter across faces.
+      cubeTarget.texture.needsUpdate = true;
       lastCubeSun.copy(oceanUniforms.uSunDirection.value);
       oceanUniforms.uCubeMap.value = cubeTarget.texture;
     } finally {
