@@ -146,6 +146,8 @@ void main() {
     + lowCloud * highCloud * 0.20, 0.0, 1.0);
   cloudDensity = clamp(cloudDensity + cloudDetail * (lowCloudEnvelope * 0.24
     + highCloudEnvelope * 0.20), 0.0, 1.0);
+  // Cloud break along the sun so the disc punches a glitter path on the water.
+  cloudDensity *= 1.0 - pow(max(cosineToSun, 0.0), 4.0) * 0.85;
   vec2 sunCloudOffset = normalize(sunDirection.xz + vec2(0.0001)) * 0.19;
   float cloudShadowNoise = noise2(cloudCoordinates * 2.65 - sunCloudOffset * 2.4 + vec2(7.1, -3.6));
   float cloudSelfShadow = smoothstep(0.25, 0.72, cloudShadowNoise);
@@ -169,10 +171,10 @@ void main() {
   const float SUN_DISC_EDGE_COS = 0.9999850;
   const float SUN_DISC_FULL_COS = 0.9999930;
   float sunDisc = smoothstep(SUN_DISC_EDGE_COS, SUN_DISC_FULL_COS, cosineToSun);
-  float sunHalo = pow(max(cosineToSun, 0.0), 4.0) * 0.024
+  float sunHalo = (pow(max(cosineToSun, 0.0), 4.0) * 0.024
     + pow(max(cosineToSun, 0.0), 12.0) * 0.060
     + pow(max(cosineToSun, 0.0), 36.0) * 0.105
-    + pow(max(cosineToSun, 0.0), 96.0) * 0.070;
+    + pow(max(cosineToSun, 0.0), 96.0) * 0.070) * 0.6;
   float sunVisibility = mix(1.0, 0.48 + cloudLight * 0.52, cloudDensity);
   skyColor += vec3(1.0, 0.59, 0.28) * sunHalo * sunVisibility;
   skyColor += vec3(8.0, 4.4, 1.45) * sunDisc * sunVisibility;
@@ -364,7 +366,7 @@ function configureEnvironmentShadows(root: THREE.Group, sky: THREE.Mesh): void {
 }
 
 export function createMarineEnvironment(
-  sunDirection = new THREE.Vector3(-0.30, 0.12, -0.95).normalize(),
+  sunDirection = new THREE.Vector3(-0.35, 0.28, -0.89).normalize(),
 ): MarineEnvironmentBuild {
   const root = new THREE.Group();
   root.name = 'marine-environment';

@@ -263,10 +263,10 @@ void main() {
     + vec2(uTime * 0.006, -uTime * 0.004);
   float sparkleNoise = foamLuma(sparkleUv);
   float sparkleMask = smoothstep(0.58, 0.84, sparkleNoise);
-  float sunFacet = smoothstep(0.16, 0.72, max(dot(normal, sunDirection), 0.0));
+  float sunFacet = smoothstep(0.05, 0.55, max(dot(normal, sunDirection), 0.0));
   float brokenSunPath = mix(0.14, 1.0, sparkleMask) * mix(0.45, 1.0, sunFacet);
-  float broadGlint = pow(facetAlignment, 74.0) * 0.012;
-  float tightGlint = pow(facetAlignment, 190.0) * 0.08;
+  float broadGlint = pow(facetAlignment, 48.0) * 0.035;
+  float tightGlint = pow(facetAlignment, 120.0) * 0.14;
   waterColor += vec3(1.0, 0.70, 0.34) * (broadGlint + tightGlint) * brokenSunPath;
 
   gl_FragColor = vec4(max(waterColor, 0.0), 1.0);
@@ -398,7 +398,7 @@ function createSceneTarget(width: number, height: number): THREE.WebGLRenderTarg
 }
 
 function createCubeMissTarget(): THREE.WebGLCubeRenderTarget {
-  const target = new THREE.WebGLCubeRenderTarget(256, {
+  const target = new THREE.WebGLCubeRenderTarget(512, {
     type: THREE.HalfFloatType,
     depthBuffer: true,
     generateMipmaps: true,
@@ -570,7 +570,7 @@ export function createOceanFeature(): RuntimeFeature {
           return;
         }
 
-        const sunDirection = new THREE.Vector3(-0.30, 0.12, -0.95).normalize();
+        const sunDirection = new THREE.Vector3(-0.35, 0.28, -0.89).normalize();
         const environment = createMarineEnvironment(sunDirection);
         root = environment.root;
         sky = environment.sky;
