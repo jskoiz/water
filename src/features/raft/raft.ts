@@ -968,6 +968,7 @@ class RaftController {
     }));
     const torus = new THREE.Mesh(torusGeometry, torusMaterial);
     torus.position.y = 0.08;
+    torus.scale.set(1, 0.35, 1);
     torus.renderOrder = 4;
     this.contactFoamGroup.add(torus);
     this.hullFoamTorus = torus;
