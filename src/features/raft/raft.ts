@@ -43,11 +43,16 @@ const MAX_ROLL = 0.52;
 const CONTACT_HALF_WIDTH = 1.25;
 const CONTACT_HALF_LENGTH = 2.05;
 const WATERLINE_LOOP = [0, 1, 2, 5, 8, 7, 6, 3] as const;
-const WATERLINE_LAYERS = [
-  { lift: 0, width: 1.15, alpha: 1 },
-  { lift: 0.12, width: 0.85, alpha: 0.7 },
-  { lift: 0.24, width: 0.55, alpha: 0.45 },
-] as const;
+const WATERLINE_WIDTH = 1.05;
+const WATERLINE_LIFT = 0.04;
+const WATERLINE_HASH_AMP = 0.2;
+const WATERLINE_BOW_AMP = 0.1;
+const WATERLINE_ALPHA = 0.88;
+
+function waterlineHash(index: number, time: number): number {
+  const value = Math.sin(index * 12.9898 + time * 78.233) * 43758.5453;
+  return value - Math.floor(value);
+}
 const HEAVE_EQUILIBRIUM_OFFSET = -0.12;
 const MAX_HEAVE_DEVIATION = 0.72;
 const MAX_HEAVE_VELOCITY = 3.2;
@@ -383,9 +388,9 @@ class RaftController {
   private readonly wakeGroup = new THREE.Group();
   private readonly contactFoamGroup = new THREE.Group();
   private readonly contactRings: THREE.Mesh[] = [];
-  private readonly waterlineRibbons: THREE.Mesh[] = [];
-  private readonly waterlineLayerPositions: Float32Array[] = [];
-  private readonly waterlineLayerMaterials: THREE.MeshBasicMaterial[] = [];
+  private waterlineRibbon: THREE.Mesh | null = null;
+  private waterlinePositions: Float32Array | null = null;
+  private hullFoamMaterial: THREE.MeshBasicMaterial | null = null;
   private readonly waterlinePoints = new Float32Array(WATERLINE_LOOP.length * 3);
   private readonly sampleOffsets = [
     // A symmetric 3x3 contact stencil gives the hull a centerline keel and
@@ -554,9 +559,9 @@ class RaftController {
     this.raftGroup.removeFromParent();
     this.contactFoamGroup.removeFromParent();
     this.contactRings.length = 0;
-    this.waterlineRibbons.length = 0;
-    this.waterlineLayerPositions.length = 0;
-    this.waterlineLayerMaterials.length = 0;
+    this.waterlineRibbon = null;
+    this.waterlinePositions = null;
+    this.hullFoamMaterial = null;
     for (const geometry of this.geometries) {
       geometry.dispose();
     }
@@ -989,43 +994,67 @@ class RaftController {
     }
 
     const pointCount = WATERLINE_LOOP.length;
-    for (let layer = 0; layer < WATERLINE_LAYERS.length; layer += 1) {
-      const material = this.registerMaterial(new THREE.MeshBasicMaterial({
-        color: 0xf0f2eb,
-        map: this.foamBreakupTexture,
-        transparent: true,
-        opacity: 0.80 * WATERLINE_LAYERS[layer].alpha,
-        depthWrite: false,
-        depthTest: true,
-        blending: THREE.NormalBlending,
-        fog: true,
-        side: THREE.DoubleSide,
-      }));
-      const positions = new Float32Array(pointCount * 2 * 3);
-      const uvs = new Float32Array(pointCount * 2 * 2);
-      const indices: number[] = [];
-      for (let index = 0; index < pointCount; index += 1) {
-        const u = index / pointCount;
-        uvs[index * 4] = u;
-        uvs[index * 4 + 1] = 0;
-        uvs[index * 4 + 2] = u;
-        uvs[index * 4 + 3] = 1;
-        const current = index * 2;
-        const next = ((index + 1) % pointCount) * 2;
-        indices.push(current, current + 1, next + 1, current, next + 1, next);
-      }
-      const geometry = this.registerGeometry(new THREE.BufferGeometry());
-      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-      geometry.setIndex(indices);
-      const ribbon = new THREE.Mesh(geometry, material);
-      ribbon.frustumCulled = false;
-      ribbon.renderOrder = 4 + layer;
-      this.contactFoamGroup.add(ribbon);
-      this.waterlineRibbons.push(ribbon);
-      this.waterlineLayerPositions.push(positions);
-      this.waterlineLayerMaterials.push(material);
+    const positions = new Float32Array(pointCount * 2 * 3);
+    const uvs = new Float32Array(pointCount * 2 * 2);
+    const indices: number[] = [];
+    for (let index = 0; index < pointCount; index += 1) {
+      const u = index / pointCount;
+      uvs[index * 4] = u;
+      uvs[index * 4 + 1] = 0;
+      uvs[index * 4 + 2] = u;
+      uvs[index * 4 + 3] = 1;
+      const current = index * 2;
+      const next = ((index + 1) % pointCount) * 2;
+      indices.push(current, current + 1, next + 1, current, next + 1, next);
     }
+    const geometry = this.registerGeometry(new THREE.BufferGeometry());
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+    const material = this.registerMaterial(new THREE.MeshBasicMaterial({
+      color: 0xf0f2eb,
+      map: this.foamBreakupTexture,
+      transparent: true,
+      opacity: WATERLINE_ALPHA,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.NormalBlending,
+      fog: true,
+      side: THREE.DoubleSide,
+    }));
+    material.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          varying vec2 vWaterlineUv;`,
+        )
+        .replace(
+          '#include <uv_vertex>',
+          `#include <uv_vertex>
+          vWaterlineUv = uv;`,
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          varying vec2 vWaterlineUv;`,
+        )
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          float vAcross = vWaterlineUv.y * 2.0 - 1.0;
+          diffuseColor.a *= (1.0 - abs(vAcross));`,
+        );
+    };
+    material.customProgramCacheKey = () => 'raft-waterline-loaf';
+    const ribbon = new THREE.Mesh(geometry, material);
+    ribbon.frustumCulled = false;
+    ribbon.renderOrder = 4;
+    this.contactFoamGroup.add(ribbon);
+    this.waterlineRibbon = ribbon;
+    this.waterlinePositions = positions;
+    this.hullFoamMaterial = material;
   }
 
   private createWakeRibbonGeometry(sections: readonly WakeSection[]): THREE.BufferGeometry {
@@ -1486,41 +1515,37 @@ class RaftController {
         this.waterlinePoints[loopIndex * 3 + 2] = this.sampleWorldPosition.z;
       }
     }
-    if (this.waterlineRibbons.length === WATERLINE_LAYERS.length) {
+    const ribbon = this.waterlineRibbon;
+    const target = this.waterlinePositions;
+    const material = this.hullFoamMaterial;
+    if (ribbon && target && material) {
       const meanAlpha = wetFloor / this.sampleOffsets.length;
       const count = WATERLINE_LOOP.length;
-      const visible = meanAlpha > 0.02;
-      for (let layer = 0; layer < WATERLINE_LAYERS.length; layer += 1) {
-        const spec = WATERLINE_LAYERS[layer];
-        const target = this.waterlineLayerPositions[layer];
-        const ribbon = this.waterlineRibbons[layer];
-        const material = this.waterlineLayerMaterials[layer];
-        for (let index = 0; index < count; index += 1) {
-          const prev = (index + count - 1) % count;
-          const next = (index + 1) % count;
-          const tangentX = this.waterlinePoints[next * 3] - this.waterlinePoints[prev * 3];
-          const tangentZ = this.waterlinePoints[next * 3 + 2] - this.waterlinePoints[prev * 3 + 2];
-          const length = Math.hypot(tangentX, tangentZ) || 1;
-          const normalX = -tangentZ / length;
-          const normalZ = tangentX / length;
-          const bow = index < 3;
-          const width = spec.width + (bow ? 0.2 : 0);
-          const bob = 0.05 * Math.sin(elapsedSeconds + index + layer);
-          const x = this.waterlinePoints[index * 3];
-          const y = this.waterlinePoints[index * 3 + 1] + spec.lift + (bow ? 0.1 : 0) + bob;
-          const z = this.waterlinePoints[index * 3 + 2];
-          const halfWidth = width * 0.5;
-          target[index * 6] = x - normalX * halfWidth;
-          target[index * 6 + 1] = y;
-          target[index * 6 + 2] = z - normalZ * halfWidth;
-          target[index * 6 + 3] = x + normalX * halfWidth;
-          target[index * 6 + 4] = y;
-          target[index * 6 + 5] = z + normalZ * halfWidth;
-        }
-        ribbon.geometry.getAttribute('position').needsUpdate = true;
-        ribbon.visible = visible;
-        material.opacity = 0.80 * spec.alpha * meanAlpha;
+      const halfWidth = WATERLINE_WIDTH * 0.5;
+      for (let index = 0; index < count; index += 1) {
+        const prev = (index + count - 1) % count;
+        const next = (index + 1) % count;
+        const tangentX = this.waterlinePoints[next * 3] - this.waterlinePoints[prev * 3];
+        const tangentZ = this.waterlinePoints[next * 3 + 2] - this.waterlinePoints[prev * 3 + 2];
+        const length = Math.hypot(tangentX, tangentZ) || 1;
+        const normalX = -tangentZ / length;
+        const normalZ = tangentX / length;
+        const amplitude = WATERLINE_HASH_AMP + (index < 3 ? WATERLINE_BOW_AMP : 0);
+        const x = this.waterlinePoints[index * 3];
+        const y = this.waterlinePoints[index * 3 + 1]
+          + WATERLINE_LIFT
+          + amplitude * waterlineHash(index, elapsedSeconds);
+        const z = this.waterlinePoints[index * 3 + 2];
+        target[index * 6] = x - normalX * halfWidth;
+        target[index * 6 + 1] = y;
+        target[index * 6 + 2] = z - normalZ * halfWidth;
+        target[index * 6 + 3] = x + normalX * halfWidth;
+        target[index * 6 + 4] = y;
+        target[index * 6 + 5] = z + normalZ * halfWidth;
       }
+      ribbon.geometry.getAttribute('position').needsUpdate = true;
+      ribbon.visible = meanAlpha > 0.02;
+      material.opacity = WATERLINE_ALPHA * meanAlpha;
     }
     this.emitContactSpray(elapsedSeconds);
   }
