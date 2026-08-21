@@ -582,6 +582,7 @@ export function createOceanFeature(): RuntimeFeature {
       gl.shadowMap.autoUpdate = false;
       gl.toneMapping = THREE.NoToneMapping;
       gl.outputColorSpace = THREE.LinearSRGBColorSpace;
+      sky?.updateMatrixWorld(true);
       cubeCamera.update(gl, scene);
       cubeTarget.texture.needsUpdate = true;
       cubeToEquirect.material.uniforms.uCubeSource.value = cubeTarget.texture;
