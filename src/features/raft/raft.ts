@@ -24,7 +24,7 @@ const WIND_SEA_LENGTH = Math.hypot(WIND_SEA_X, WIND_SEA_Z);
 const WIND_DIR_X = WIND_SEA_X / WIND_SEA_LENGTH;
 const WIND_DIR_Z = WIND_SEA_Z / WIND_SEA_LENGTH;
 const WIND_SPEED_MPS = 4.2;
-const SAIL_RUN_SPEED = 3.35;
+const SAIL_RUN_SPEED = 10.2;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
 function initialHeadingFromUrl(): number {
@@ -1261,7 +1261,7 @@ class RaftController {
   }
 
   private updateWake(elapsedSeconds: number): void {
-    const speedFactor = clamp(this.speedMetersPerSecond / 3.35, 0, 1);
+    const speedFactor = clamp(this.speedMetersPerSecond / SAIL_RUN_SPEED, 0, 1);
     const impactFactor = clamp(this.wakeImpact, 0, 1);
     // Wake is boat speed first, plus a slap from heave rate. Spring is read-only.
     const wakeStrength = clamp(
