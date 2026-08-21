@@ -209,19 +209,19 @@ interface MarineMaterials {
 function createMarineMaterials(): MarineMaterials {
   return {
     islandRock: new THREE.MeshStandardMaterial({
-      color: 0x2e555a,
+      color: 0x6a8a58,
       roughness: 0.94,
       metalness: 0,
       flatShading: false,
     }),
     islandShadow: new THREE.MeshStandardMaterial({
-      color: 0x193b43,
+      color: 0x3e5a3c,
       roughness: 0.98,
       metalness: 0,
       flatShading: false,
     }),
     islandVegetation: new THREE.MeshStandardMaterial({
-      color: 0x25564a,
+      color: 0x4f7a45,
       roughness: 0.91,
       metalness: 0,
       flatShading: false,
@@ -249,28 +249,23 @@ function createMarineMaterials(): MarineMaterials {
   };
 }
 
-function addTree(
+function addVegetationCap(
   parent: THREE.Group,
   materials: MarineMaterials,
   x: number,
   y: number,
   z: number,
-  scale: number,
+  scaleX: number,
+  scaleY: number,
+  scaleZ: number,
 ): void {
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.08 * scale, 0.14 * scale, 1.2 * scale, 5),
-    materials.islandShadow,
-  );
-  trunk.position.set(x, y + 0.6 * scale, z);
-  parent.add(trunk);
-
-  const crown = new THREE.Mesh(
-    new THREE.DodecahedronGeometry(0.85 * scale, 0),
+  const cap = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(1, 1),
     materials.islandVegetation,
   );
-  crown.position.set(x, y + 1.5 * scale, z);
-  crown.scale.set(1.2, 0.82, 1);
-  parent.add(crown);
+  cap.position.set(x, y, z);
+  cap.scale.set(scaleX, scaleY, scaleZ);
+  parent.add(cap);
 }
 
 function addIsland(
@@ -295,10 +290,10 @@ function addIsland(
   island.add(base);
 
   const peak = new THREE.Mesh(
-    new THREE.ConeGeometry(3.7, 6.6, 7),
+    new THREE.ConeGeometry(3.7, 2.8, 7),
     materials.islandShadow,
   );
-  peak.position.set(-1.5, 2.1, 0.25);
+  peak.position.set(-1.5, 1.35, 0.25);
   peak.rotation.z = -0.1;
   island.add(peak);
 
@@ -311,9 +306,9 @@ function addIsland(
   island.add(shelf);
 
   if (withTrees) {
-    addTree(island, materials, -3.4, 2.6, 0.2, 0.85);
-    addTree(island, materials, 0.8, 1.4, -0.8, 0.62);
-    addTree(island, materials, 3.2, 1.7, 0.3, 0.55);
+    addVegetationCap(island, materials, -1.5, 2.55, 0.2, 2.4, 0.55, 1.6);
+    addVegetationCap(island, materials, 0.9, 1.55, -0.7, 1.15, 0.34, 0.82);
+    addVegetationCap(island, materials, 3.1, 1.35, 0.25, 0.95, 0.3, 0.7);
   }
 }
 
