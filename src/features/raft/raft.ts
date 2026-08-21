@@ -1354,7 +1354,7 @@ class RaftController {
         const side = sides[sideIndex];
         for (let sectionIndex = 0; sectionIndex < WAKE_SECTIONS.length; sectionIndex += 1) {
           const section = WAKE_SECTIONS[sectionIndex];
-          const pointSize = (12 + 8 * section.alpha) * section.alpha * wakeStrength;
+          const pointSize = (22 + 14 * section.alpha) * section.alpha * wakeStrength;
           for (let bubble = 0; bubble < WAKE_FOAM_PER_SECTION; bubble += 1) {
             const scatter = WAKE_FOAM_SCATTER[bubble];
             const bob = 0.03 * Math.sin(
@@ -1475,7 +1475,7 @@ class RaftController {
       if (hullPositions && hullSizes) {
         const headingCos = Math.cos(this.heading);
         const headingSin = Math.sin(this.heading);
-        const pointSize = alpha > 0.02 ? 18 + 8 * alpha : 0;
+        const pointSize = alpha > 0.02 ? 32 + 16 * alpha : 0;
         for (let bubble = 0; bubble < CONTACT_FOAM_PER_SAMPLE; bubble += 1) {
           const scatter = CONTACT_FOAM_SCATTER[bubble];
           const bob = 0.03 * Math.sin(elapsedSeconds * 2.35 + index * 1.7 + bubble * 0.85);
@@ -1560,9 +1560,9 @@ class RaftController {
       transparent: true,
       depthWrite: false,
       depthTest: true,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       fog: false,
-      toneMapped: false,
+      toneMapped: true,
       vertexShader: /* glsl */ `
         attribute float size;
         uniform float uRefDistance;
@@ -1577,10 +1577,10 @@ class RaftController {
         uniform sampler2D map;
 
         void main() {
-          float radial = 1.0 - length(gl_PointCoord - 0.5) * 2.0;
+          float radial = 1.0 - length(gl_PointCoord - 0.5) * 1.35;
           float a = texture2D(map, gl_PointCoord).g * radial;
           if (a < 0.08) discard;
-          gl_FragColor = vec4(vec3(0.92, 0.96, 0.96), a * 0.55);
+          gl_FragColor = vec4(vec3(0.96, 0.95, 0.92), a * 0.82);
         }
       `,
     }));
