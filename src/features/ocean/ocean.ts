@@ -232,13 +232,10 @@ void main() {
   ).rgb;
   float breakup = mix(dot(breakupA, vec3(0.3333333)), dot(breakupB, vec3(0.3333333)), 0.42);
   breakup = smoothstep(0.62, 0.88, breakup);
-  float crestMask = max(
-    smoothstep(0.10, 0.42, vCompression),
-    smoothstep(0.18, 0.68, max(vCurvature, 0.0)) * 0.72
-  );
+  float crestMask = smoothstep(0.04, 0.28, vCompression);
   float foam = clamp(
-    vFoam * (0.025 + breakup * 0.52) * (0.26 + crestMask * 0.74)
-      + vCompression * 0.045,
+    vFoam * (0.14 + breakup * 0.68) * (0.22 + crestMask * 0.88)
+      + vCompression * 0.08,
     0.0,
     1.0
   );
@@ -283,8 +280,8 @@ void main() {
   float objectHit = inBounds * step(sceneEye, uCameraFar * 0.97);
   vec3 transmittedWater = mix(bodyColor, texture2D(uSceneColor, safeUV).rgb * transmittance, objectHit);
   vec3 waterColor = mix(transmittedWater, reflected, fresnel);
-  vec3 foamColor = mix(vec3(0.16, 0.37, 0.42), vec3(0.72, 0.85, 0.81), breakup);
-  waterColor = mix(waterColor, foamColor, foam * 0.52);
+  vec3 foamColor = mix(vec3(0.16, 0.37, 0.42), vec3(0.86, 0.92, 0.90), breakup);
+  waterColor = mix(waterColor, foamColor, foam * 0.78);
 
   // N·H only. No spatial flake — facing Gerstner facets light the path.
   vec3 halfVector = normalize(viewDirection + sunDirection);
