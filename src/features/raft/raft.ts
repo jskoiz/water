@@ -900,26 +900,12 @@ class RaftController {
       wake.renderOrder = 1;
       this.wakeGroup.add(wake);
     }
-    for (const side of [-1, 1]) {
-      const volumeGeometry = this.createWakeRibbonGeometry(
-        WAKE_SECTIONS.map((section) => ({
-          ...section,
-          x: section.x * side,
-          width: section.width * 1.7,
-          alpha: section.alpha * 0.55,
-        })),
-      );
-      const volume = new THREE.Mesh(volumeGeometry, wakeMaterial);
-      volume.position.y = 0.11;
-      volume.renderOrder = 1;
-      this.wakeGroup.add(volume);
-    }
-    const fillGeometry = this.createWakeRibbonGeometry(
+    const fillGeometry = this.createWakeFillGeometry(
       WAKE_SECTIONS.map((section, index) => ({
         x: 0,
         z: section.z,
         width: 0.6 + 1.6 * (index / Math.max(WAKE_SECTIONS.length - 1, 1)),
-        alpha: 0.4,
+        alpha: section.alpha,
       })),
     );
     const fill = new THREE.Mesh(fillGeometry, wakeMaterial);
@@ -1014,6 +1000,43 @@ class RaftController {
     this.waterlineRibbon = ribbon;
     this.waterlinePositions = positions;
     this.hullFoamMaterial = material;
+  }
+
+  private createWakeFillGeometry(sections: readonly WakeSection[]): THREE.BufferGeometry {
+    const positions: number[] = [];
+    const alphas: number[] = [];
+    const indices: number[] = [];
+
+    for (const section of sections) {
+      const halfWidth = section.width * 0.5;
+      positions.push(
+        section.x - halfWidth, 0, section.z,
+        section.x, 0, section.z,
+        section.x + halfWidth, 0, section.z,
+      );
+      alphas.push(0, section.alpha, 0);
+    }
+
+    for (let sectionIndex = 0; sectionIndex < sections.length - 1; sectionIndex += 1) {
+      const current = sectionIndex * 3;
+      const next = current + 3;
+      for (let lane = 0; lane < 2; lane += 1) {
+        const currentLeft = current + lane;
+        const currentRight = current + lane + 1;
+        const nextLeft = next + lane;
+        const nextRight = next + lane + 1;
+        indices.push(
+          currentLeft, nextLeft, nextRight,
+          currentLeft, nextRight, currentRight,
+        );
+      }
+    }
+
+    const geometry = this.registerGeometry(new THREE.BufferGeometry());
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('aAlpha', new THREE.Float32BufferAttribute(alphas, 1));
+    geometry.setIndex(indices);
+    return geometry;
   }
 
   private createWakeRibbonGeometry(sections: readonly WakeSection[]): THREE.BufferGeometry {
