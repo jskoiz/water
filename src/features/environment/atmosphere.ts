@@ -408,13 +408,26 @@ export function createMarineEnvironment(
   if (!discContext) {
     throw new Error('Sun disc canvas context is required.');
   }
-  discContext.clearRect(0, 0, 128, 128);
-  discContext.fillStyle = '#ffcc66';
-  discContext.beginPath();
-  discContext.arc(64, 64, 60, 0, Math.PI * 2);
-  discContext.fill();
+  const discPixels = discContext.createImageData(128, 128);
+  const radiusSquared = 63.5 * 63.5;
+  for (let y = 0; y < 128; y += 1) {
+    for (let x = 0; x < 128; x += 1) {
+      const dx = x + 0.5 - 64;
+      const dy = y + 0.5 - 64;
+      const inside = dx * dx + dy * dy <= radiusSquared;
+      const index = (y * 128 + x) * 4;
+      discPixels.data[index] = 0xff;
+      discPixels.data[index + 1] = 0xc8;
+      discPixels.data[index + 2] = 0x57;
+      discPixels.data[index + 3] = inside ? 255 : 0;
+    }
+  }
+  discContext.putImageData(discPixels, 0, 0);
   const discMap = new THREE.CanvasTexture(discCanvas);
   discMap.colorSpace = THREE.SRGBColorSpace;
+  discMap.generateMipmaps = false;
+  discMap.minFilter = THREE.NearestFilter;
+  discMap.magFilter = THREE.NearestFilter;
   const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
     map: discMap,
     sizeAttenuation: false,
@@ -423,10 +436,11 @@ export function createMarineEnvironment(
     toneMapped: false,
     fog: false,
     transparent: true,
+    alphaTest: 0.5,
   }));
   sunSprite.name = 'marine-sun-disc';
   sunSprite.position.copy(normalizedSunDirection).multiplyScalar(480);
-  sunSprite.scale.set(0.16, 0.16, 1);
+  sunSprite.scale.set(0.32, 0.32, 1);
   sunSprite.renderOrder = 50;
   sunSprite.frustumCulled = false;
   sky.add(sunSprite);
