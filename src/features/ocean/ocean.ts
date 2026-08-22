@@ -289,7 +289,7 @@ void main() {
   // N·H only. No spatial flake — facing Gerstner facets light the path.
   vec3 halfVector = normalize(viewDirection + sunDirection);
   float facetAlignment = max(dot(normal, halfVector), 0.0);
-  float glitter = step(0.88, facetAlignment) * pow(facetAlignment, 80.0) * 0.55;
+  float glitter = step(0.93, facetAlignment) * pow(facetAlignment, 140.0) * 0.65 * (1.0 - foam * 0.6);
   waterColor += vec3(1.0, 0.70, 0.34) * glitter;
 
   gl_FragColor = vec4(max(waterColor, 0.0), 1.0);
