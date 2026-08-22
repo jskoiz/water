@@ -231,14 +231,14 @@ void main() {
     foamUv * 1.71 - vec2(uTime * 0.003, uTime * 0.004)
   ).rgb;
   float breakup = mix(dot(breakupA, vec3(0.3333333)), dot(breakupB, vec3(0.3333333)), 0.42);
-  breakup = smoothstep(0.62, 0.88, breakup);
+  breakup = smoothstep(0.55, 0.86, breakup);
   float crestMask = max(
-    smoothstep(0.10, 0.42, vCompression),
-    smoothstep(0.18, 0.68, max(vCurvature, 0.0)) * 0.72
+    smoothstep(0.08, 0.36, vCompression),
+    smoothstep(0.14, 0.62, max(vCurvature, 0.0)) * 0.78
   );
   float foam = clamp(
-    vFoam * (0.025 + breakup * 0.52) * (0.26 + crestMask * 0.74)
-      + vCompression * 0.045,
+    vFoam * (0.008 + breakup * 0.82) * (0.10 + crestMask * 1.15)
+      + vCompression * 0.09,
     0.0,
     1.0
   );
