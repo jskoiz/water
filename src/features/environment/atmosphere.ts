@@ -283,7 +283,7 @@ function addIsland(
   withTrees: boolean,
 ): void {
   const island = new THREE.Group();
-  island.position.set(x, -0.22, z);
+  island.position.set(x, -0.72, z);
   island.scale.setScalar(scale);
   parent.add(island);
 
@@ -291,8 +291,8 @@ function addIsland(
     new THREE.DodecahedronGeometry(6.2, 1),
     materials.islandRock,
   );
-  base.scale.set(1.8, 0.33, 0.8);
-  base.position.y = 0.2;
+  base.scale.set(1.8, 0.70, 0.8);
+  base.position.y = -0.15;
   island.add(base);
 
   const peak = new THREE.Mesh(
