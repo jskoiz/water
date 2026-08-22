@@ -286,12 +286,10 @@ void main() {
   vec3 foamColor = mix(vec3(0.16, 0.37, 0.42), vec3(0.72, 0.85, 0.81), breakup);
   waterColor = mix(waterColor, foamColor, foam * 0.52);
 
-  // Binary flake gate on Gerstner facets. No floor mix — glitter is off or on.
+  // N·H only. No spatial flake — facing Gerstner facets light the path.
   vec3 halfVector = normalize(viewDirection + sunDirection);
   float facetAlignment = max(dot(normal, halfVector), 0.0);
-  vec2 cell = floor(vOceanPosition * 8.0);
-  float flake = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
-  float glitter = step(0.80, flake) * step(0.88, facetAlignment) * pow(facetAlignment, 80.0) * 0.55;
+  float glitter = step(0.93, facetAlignment) * pow(facetAlignment, 140.0) * 0.65 * (1.0 - foam * 0.6);
   waterColor += vec3(1.0, 0.70, 0.34) * glitter;
 
   gl_FragColor = vec4(max(waterColor, 0.0), 1.0);
