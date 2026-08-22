@@ -53,7 +53,7 @@ float noise2(vec2 point) {
 float cloudNoise(vec2 point) {
   float value = 0.0;
   float amplitude = 0.5;
-  for (int octave = 0; octave < 4; octave += 1) {
+  for (int octave = 0; octave < 2; octave += 1) {
     value += noise2(point) * amplitude;
     point = point * 2.03 + vec2(17.2, -11.7);
     amplitude *= 0.5;
@@ -95,19 +95,19 @@ vec2 cloudField(float cloudAzimuth, float altitude, vec2 sunXZ) {
     altitude * 6.8 + sin(cloudAzimuth * 2.8 + altitude * 4.0) * 0.34
   );
   float cloudFar = cloudNoise(cloudCoordinates * 0.92 + vec2(2.4, -0.7));
-  float cloudNear = cloudNoise(cloudCoordinates * 2.70 - vec2(4.8, 1.9));
+  float cloudNear = cloudNoise(cloudCoordinates * 0.90 - vec2(4.8, 1.9));
   float lowCloudEnvelope = smoothstep(0.025, 0.16, altitude)
     * (1.0 - smoothstep(0.46, 0.68, altitude));
   float highCloudEnvelope = smoothstep(0.23, 0.39, altitude)
     * (1.0 - smoothstep(0.83, 0.985, altitude));
-  float cloudBody = smoothstep(0.31, 0.57, cloudFar + (cloudNear - 0.5) * 0.22);
+  float cloudBody = smoothstep(0.14, 0.42, cloudFar + (cloudNear - 0.5) * 0.22);
   float cloudDetail = smoothstep(0.36, 0.70, cloudNear);
   float lowCloud = cloudBody * lowCloudEnvelope;
   float highCloud = smoothstep(0.36, 0.61, mix(cloudFar, cloudNear, 0.34))
     * highCloudEnvelope;
   float density = clamp(lowCloud * 0.92 + highCloud * 0.80
     + lowCloud * highCloud * 0.20, 0.0, 1.0);
-  density = clamp(density + cloudDetail * (lowCloudEnvelope * 0.24
+  density = clamp(density + cloudDetail * (lowCloudEnvelope * 0.06
     + highCloudEnvelope * 0.20), 0.0, 1.0);
   vec2 sunCloudOffset = normalize(sunXZ + vec2(0.0001)) * 0.19;
   float shadow = noise2(cloudCoordinates * 2.65 - sunCloudOffset * 2.4 + vec2(7.1, -3.6));
@@ -143,12 +143,13 @@ void main() {
   float horizon = 1.0 - smoothstep(0.0, 0.34, altitude);
   vec3 horizonAerialTint = mix(vec3(0.26, 0.44, 0.57), vec3(0.78, 0.55, 0.34),
     smoothstep(-0.02, 0.26, sunDirection.y));
-  vec3 skyColor = inScattering * 0.052;
+  vec3 skyColor = inScattering * 0.07;
+  skyColor += vec3(0.18, 0.32, 0.48) * (1.0 - clamp(cosineToSun * 0.5 + 0.5, 0.0, 1.0)) * 0.11;
   skyColor += extinction * mix(vec3(0.006, 0.018, 0.050), horizonAerialTint * 0.11, horizon);
   skyColor += extinction * vec3(0.000, 0.005, 0.024) * smoothstep(0.08, 0.92, altitude);
   skyColor += horizonAerialTint * horizon * horizon * 0.064;
 
-  // Two correlated, four-octave cloud fields. 2-sample atan across ±π so the
+  // Two correlated, two-octave cloud fields. 2-sample atan across ±π so the
   // atan wrap still 2-sampled so the cloud field does not flash a vertical edge.
   float cloudAzimuth = atan(direction.z, direction.x);
   float cloudAzimuthWrap = cloudAzimuth - sign(cloudAzimuth) * 6.28318530718;
@@ -157,7 +158,7 @@ void main() {
   vec2 cloudB = cloudField(cloudAzimuthWrap, altitude, sunDirection.xz);
   float cloudDensity = mix(cloudA.x, 0.5 * (cloudA.x + cloudB.x), meridianMix);
   // Cloud break along the sun so the disc punches a glitter path on the water.
-  cloudDensity *= 1.0 - pow(max(cosineToSun, 0.0), 4.0) * 0.85;
+  cloudDensity *= 1.0 - pow(max(cosineToSun, 0.0), 8.0) * 0.28;
   float cloudShadowNoise = mix(cloudA.y, 0.5 * (cloudA.y + cloudB.y), meridianMix);
   float cloudSelfShadow = smoothstep(0.25, 0.72, cloudShadowNoise);
   float sunFacingCloud = clamp(dot(direction, sunDirection) * 0.5 + 0.5, 0.0, 1.0);
@@ -185,6 +186,8 @@ void main() {
     + pow(max(cosineToSun, 0.0), 36.0) * 0.105
     + pow(max(cosineToSun, 0.0), 96.0) * 0.070) * 0.6;
   float sunVisibility = mix(1.0, 0.48 + cloudLight * 0.52, cloudDensity);
+  sunHalo *= 0.0;
+  sunDisc *= 0.0;
   skyColor += vec3(1.0, 0.59, 0.28) * sunHalo * sunVisibility;
   skyColor += vec3(8.0, 4.4, 1.45) * sunDisc * sunVisibility;
 
@@ -397,6 +400,50 @@ export function createMarineEnvironment(
   sky.renderOrder = -100;
   // No UV wrap, so vSkyDirection interpolates without a φ-cut. Sun stays world-space.
   root.add(sky);
+
+  const discCanvas = document.createElement('canvas');
+  discCanvas.width = 128;
+  discCanvas.height = 128;
+  const discContext = discCanvas.getContext('2d');
+  if (!discContext) {
+    throw new Error('Sun disc canvas context is required.');
+  }
+  const discPixels = discContext.createImageData(128, 128);
+  const radiusSquared = 63.5 * 63.5;
+  for (let y = 0; y < 128; y += 1) {
+    for (let x = 0; x < 128; x += 1) {
+      const dx = x + 0.5 - 64;
+      const dy = y + 0.5 - 64;
+      const inside = dx * dx + dy * dy <= radiusSquared;
+      const index = (y * 128 + x) * 4;
+      discPixels.data[index] = 0xff;
+      discPixels.data[index + 1] = 0xc8;
+      discPixels.data[index + 2] = 0x57;
+      discPixels.data[index + 3] = inside ? 255 : 0;
+    }
+  }
+  discContext.putImageData(discPixels, 0, 0);
+  const discMap = new THREE.CanvasTexture(discCanvas);
+  discMap.colorSpace = THREE.SRGBColorSpace;
+  discMap.generateMipmaps = false;
+  discMap.minFilter = THREE.NearestFilter;
+  discMap.magFilter = THREE.NearestFilter;
+  const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: discMap,
+    sizeAttenuation: false,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+    fog: false,
+    transparent: true,
+    alphaTest: 0.5,
+  }));
+  sunSprite.name = 'marine-sun-disc';
+  sunSprite.position.copy(normalizedSunDirection).multiplyScalar(480);
+  sunSprite.scale.set(0.32, 0.32, 1);
+  sunSprite.renderOrder = 50;
+  sunSprite.frustumCulled = false;
+  sky.add(sunSprite);
 
   const sun = new THREE.DirectionalLight(0xffd8b5, 3.05);
   sun.position.copy(normalizedSunDirection).multiplyScalar(180);
