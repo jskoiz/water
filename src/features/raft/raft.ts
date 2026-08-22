@@ -1595,7 +1595,7 @@ class RaftController {
             uWaterHeight + 0.04,
             vWaterlineWorldPosition.y
           );
-          diffuseColor.rgb *= mix(vec3(1.0), vec3(0.52, 0.60, 0.62), waterlineWetness * 0.58);`,
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.90, 0.94, 0.93), waterlineWetness * 0.55);`,
         )
         .replace(
           '#include <roughnessmap_fragment>',
@@ -1603,7 +1603,7 @@ class RaftController {
           roughnessFactor = mix(roughnessFactor, roughnessFactor * 0.22, waterlineWetness);`,
         );
     };
-    material.customProgramCacheKey = () => 'raft-waterline-wetness';
+    material.customProgramCacheKey = () => 'raft-waterline-wetness-043';
     return material;
   }
 }
