@@ -157,8 +157,11 @@ void main() {
   vec2 cloudA = cloudField(cloudAzimuth, altitude, sunDirection.xz);
   vec2 cloudB = cloudField(cloudAzimuthWrap, altitude, sunDirection.xz);
   float cloudDensity = mix(cloudA.x, 0.5 * (cloudA.x + cloudB.x), meridianMix);
-  // Cloud break along the sun so the disc punches a glitter path on the water.
-  cloudDensity *= 1.0 - pow(max(cosineToSun, 0.0), 8.0) * 0.28;
+  // Close the sun hole. Tiny disc seat only, then add a cloud ring around it.
+  cloudDensity *= 1.0 - pow(max(cosineToSun, 0.0), 48.0) * 0.10;
+  float sunRing = smoothstep(0.86, 0.95, max(cosineToSun, 0.0))
+    * (1.0 - smoothstep(0.982, 0.996, max(cosineToSun, 0.0)));
+  cloudDensity = clamp(cloudDensity + sunRing * 0.50, 0.0, 1.0);
   float cloudShadowNoise = mix(cloudA.y, 0.5 * (cloudA.y + cloudB.y), meridianMix);
   float cloudSelfShadow = smoothstep(0.25, 0.72, cloudShadowNoise);
   float sunFacingCloud = clamp(dot(direction, sunDirection) * 0.5 + 0.5, 0.0, 1.0);
