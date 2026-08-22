@@ -53,7 +53,7 @@ float noise2(vec2 point) {
 float cloudNoise(vec2 point) {
   float value = 0.0;
   float amplitude = 0.5;
-  for (int octave = 0; octave < 2; octave += 1) {
+  for (int octave = 0; octave < 6; octave += 1) {
     value += noise2(point) * amplitude;
     point = point * 2.03 + vec2(17.2, -11.7);
     amplitude *= 0.5;
@@ -149,19 +149,19 @@ void main() {
   skyColor += extinction * vec3(0.000, 0.005, 0.024) * smoothstep(0.08, 0.92, altitude);
   skyColor += horizonAerialTint * horizon * horizon * 0.064;
 
-  // Two correlated, two-octave cloud fields. 2-sample atan across ±π so the
+  // Two correlated, six-octave cloud fields. 2-sample atan across ±π so the
   // atan wrap still 2-sampled so the cloud field does not flash a vertical edge.
   float cloudAzimuth = atan(direction.z, direction.x);
   float cloudAzimuthWrap = cloudAzimuth - sign(cloudAzimuth) * 6.28318530718;
   float meridianMix = smoothstep(3.14159265359 - 0.12, 3.14159265359, abs(cloudAzimuth));
   vec2 cloudA = cloudField(cloudAzimuth, altitude, sunDirection.xz);
   vec2 cloudB = cloudField(cloudAzimuthWrap, altitude, sunDirection.xz);
-  float cloudDensity = mix(cloudA.x, 0.5 * (cloudA.x + cloudB.x), meridianMix);
-  // Close the sun hole. Tiny disc seat only, then add a cloud ring around it.
-  cloudDensity *= 1.0 - pow(max(cosineToSun, 0.0), 48.0) * 0.10;
-  float sunRing = smoothstep(0.86, 0.95, max(cosineToSun, 0.0))
-    * (1.0 - smoothstep(0.982, 0.996, max(cosineToSun, 0.0)));
-  cloudDensity = clamp(cloudDensity + sunRing * 0.50, 0.0, 1.0);
+  float coarse = mix(cloudA.x, 0.5 * (cloudA.x + cloudB.x), meridianMix);
+  float cloudDensity = coarse;
+  cloudDensity *= 1.0 - pow(max(cosineToSun, 0.0), 48.0) * 0.40;
+  cloudDensity += smoothstep(0.12, 0.55, cosineToSun)
+    * (1.0 - smoothstep(0.88, 0.992, cosineToSun)) * coarse * 0.50;
+  cloudDensity = clamp(cloudDensity, 0.0, 1.0);
   float cloudShadowNoise = mix(cloudA.y, 0.5 * (cloudA.y + cloudB.y), meridianMix);
   float cloudSelfShadow = smoothstep(0.25, 0.72, cloudShadowNoise);
   float sunFacingCloud = clamp(dot(direction, sunDirection) * 0.5 + 0.5, 0.0, 1.0);
