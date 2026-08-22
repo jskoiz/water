@@ -401,6 +401,50 @@ export function createMarineEnvironment(
   // No UV wrap, so vSkyDirection interpolates without a φ-cut. Sun stays world-space.
   root.add(sky);
 
+  const glowCanvas = document.createElement('canvas');
+  glowCanvas.width = 128;
+  glowCanvas.height = 128;
+  const glowContext = glowCanvas.getContext('2d');
+  if (!glowContext) {
+    throw new Error('Sun glow canvas context is required.');
+  }
+  const glowPixels = glowContext.createImageData(128, 128);
+  for (let y = 0; y < 128; y += 1) {
+    for (let x = 0; x < 128; x += 1) {
+      const dx = x + 0.5 - 64;
+      const dy = y + 0.5 - 64;
+      const radius = Math.sqrt(dx * dx + dy * dy) / 64;
+      const falloff = radius >= 1 ? 0 : (1 - radius) * (1 - radius);
+      const index = (y * 128 + x) * 4;
+      glowPixels.data[index] = 0xff;
+      glowPixels.data[index + 1] = 0xe2;
+      glowPixels.data[index + 2] = 0xa0;
+      glowPixels.data[index + 3] = Math.round(255 * falloff);
+    }
+  }
+  glowContext.putImageData(glowPixels, 0, 0);
+  const glowMap = new THREE.CanvasTexture(glowCanvas);
+  glowMap.colorSpace = THREE.SRGBColorSpace;
+  glowMap.minFilter = THREE.LinearFilter;
+  glowMap.magFilter = THREE.LinearFilter;
+  const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowMap,
+    color: 0xffc878,
+    sizeAttenuation: false,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+    fog: false,
+    transparent: true,
+    blending: THREE.NormalBlending,
+  }));
+  sunGlow.name = 'marine-sun-glow';
+  sunGlow.position.copy(normalizedSunDirection).multiplyScalar(480);
+  sunGlow.scale.set(0.72, 0.72, 1);
+  sunGlow.renderOrder = 40;
+  sunGlow.frustumCulled = false;
+  sky.add(sunGlow);
+
   const discCanvas = document.createElement('canvas');
   discCanvas.width = 128;
   discCanvas.height = 128;
